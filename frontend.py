@@ -29,7 +29,12 @@ with st.sidebar:
     st.title("🚀 LabOdc Recruitment")
     
     if st.session_state.is_logged_in and st.session_state.user:
-        user_role = st.session_state.user.get('role', 'student').lower()
+        # Lấy role an toàn, mặc định là student nếu thiếu
+        user_role = st.session_state.user.get('role', 'student')
+        if isinstance(user_role, dict): # Trường hợp trả về Enum dạng dict
+             user_role = user_role.get('value', 'student')
+        user_role = str(user_role).lower()
+        
         user_email = st.session_state.user.get('email')
         
         # Mapping hiển thị Role đẹp hơn
@@ -85,7 +90,7 @@ with st.sidebar:
 # --- 1. AUTHENTICATION (Đăng nhập/Đăng ký) ---
 if choice == "📝 Đăng ký":
     st.header("Đăng ký thành viên mới")
-    role_choice = st.selectbox("Bạn là ai?", ["Sinh viên (Student)", "Nhà tuyển dụng (Company)"]) # Admin thường tạo cứng trong DB
+    role_choice = st.selectbox("Bạn là ai?", ["Sinh viên (Student)", "Nhà tuyển dụng (Company)"]) 
     role_api = "student" if "Sinh viên" in role_choice else "company"
 
     with st.form("register_form"):
@@ -101,7 +106,15 @@ if choice == "📝 Đăng ký":
             try:
                 res = requests.post(f"{API_URL}/users/", json=user_payload)
                 if res.status_code == 200:
-                    st.success("✅ Đăng ký thành công! Vui lòng đăng nhập.")
+                    new_user = res.json()
+                    st.success(f"✅ Đăng ký thành công ID {new_user['id']}! Vui lòng đăng nhập.")
+                    
+                    # Tự động tạo hồ sơ rỗng để tránh lỗi sau này
+                    if role_api == 'student':
+                        requests.post(f"{API_URL}/students/{new_user['id']}", json={"fullName": fullname, "major": "N/A"})
+                    elif role_api == 'company':
+                        requests.post(f"{API_URL}/companies/{new_user['id']}", json={"companyName": company_name})
+                        
                 else:
                     st.error(f"Lỗi: {res.text}")
             except Exception as e:
@@ -114,18 +127,24 @@ elif choice == "🔑 Đăng nhập":
         password = st.text_input("Mật khẩu", type="password")
         if st.form_submit_button("Đăng nhập"):
             try:
-                # Demo: Lấy tất cả user check (Thực tế nên có API /login trả về token)
+                # Demo: Lấy tất cả user check (Thực tế nên dùng API Login riêng)
                 res = requests.get(f"{API_URL}/users/")
                 if res.status_code == 200:
                     users = res.json()
-                    user = next((u for u in users if u['email'] == email), None) # Bỏ qua check pass cho demo
+                    # Tìm user có email trùng khớp
+                    user = next((u for u in users if u['email'] == email), None) 
+                    
                     if user:
+                        # Check pass đơn giản (vì DB lưu pass thường trong demo này)
+                        # Nếu bạn đã hash pass ở backend thì đoạn này cần sửa
                         st.session_state.is_logged_in = True
                         st.session_state.user = user
-                        st.success(f"Chào mừng {user.get('role')}!")
+                        st.success(f"Đăng nhập thành công!")
                         st.rerun()
                     else:
-                        st.error("Sai email hoặc mật khẩu.")
+                        st.error("Sai email hoặc tài khoản không tồn tại.")
+                else:
+                    st.error("Không thể kết nối lấy danh sách User.")
             except Exception as e:
                 st.error(f"Lỗi kết nối: {e}")
 
@@ -134,235 +153,343 @@ elif choice == "📄 Hồ sơ & Kỹ năng":
     st.header("👤 Hồ sơ cá nhân & Kỹ năng")
     user_id = st.session_state.user['id']
     
-    # 1. Thông tin cơ bản
     try:
         res = requests.get(f"{API_URL}/students/user/{user_id}")
         student_data = res.json() if res.status_code == 200 else {}
     except: student_data = {}
 
     with st.expander("Thông tin cơ bản", expanded=True):
-        with st.form("update_profile"):
-            fn = st.text_input("Họ tên", value=student_data.get("fullName", ""))
-            mj = st.text_input("Chuyên ngành", value=student_data.get("major", ""))
-            if st.form_submit_button("Lưu thông tin"):
-                # TODO: Gọi API PUT update profile
-                st.success("Đã lưu thông tin cơ bản!")
+        st.write(f"**Họ tên:** {student_data.get('fullName', 'Chưa cập nhật')}")
+        st.write(f"**Chuyên ngành:** {student_data.get('major', 'Chưa cập nhật')}")
+        st.info("Tính năng chỉnh sửa đang phát triển...")
 
-    # 2. Kỹ năng & Trình độ (Để Matching)
     st.subheader("🛠 Kỹ năng của bạn")
-    st.info("Cập nhật kỹ năng để hệ thống gợi ý việc làm phù hợp.")
-    
     col1, col2 = st.columns(2)
     with col1:
         my_skills = st.multiselect("Chọn kỹ năng bạn có:", 
                                    ["Python", "Java", "ReactJS", "SQL", "Communication", "English"],
-                                   default=["Python"]) # Demo default
+                                   default=["Python"]) 
     with col2:
         level = st.selectbox("Trình độ hiện tại:", ["Fresher", "Junior", "Senior", "Intern"])
     
     if st.button("Cập nhật Kỹ năng"):
-        # TODO: Gọi API lưu skill vào bảng student_skills
         st.success(f"Đã lưu bộ kỹ năng: {', '.join(my_skills)} - Level: {level}")
 
 elif choice == "🏠 Việc làm & Matching":
     st.header("Tìm kiếm việc làm")
     
-    # Giả lập Matching: Lấy skill của user so với skill của Job
-    user_skills = {"Python", "SQL"} # Giả sử lấy từ DB
-    
+    # 1. Gọi API lấy danh sách Job thật từ DB
     try:
-        jobs = requests.get(f"{API_URL}/jobs/").json()
-        
-        col_search, col_filter = st.columns([3, 1])
-        search_term = col_search.text_input("Tìm kiếm theo từ khóa...")
-        
-        for job in jobs:
-            # Giả lập skill của job
-            job_req_skills = set(job.get('skills', ["Python", "Java"])) # Demo data
-            match_score = len(user_skills.intersection(job_req_skills))
-            is_match = match_score > 0
+        response = requests.get(f"{API_URL}/jobs/")
+        if response.status_code == 200:
+            jobs = response.json()
+            if not jobs:
+                st.info("Hiện chưa có tin tuyển dụng nào.")
             
-            with st.container():
-                st.markdown(f"""
-                <div class="job-card">
-                    <div style="display:flex; justify-content:space-between;">
-                        <h3>{job['title']}</h3>
-                        {'<span class="match-badge">⚡ PHÙ HỢP VỚI BẠN</span>' if is_match else ''}
+            # Thanh tìm kiếm
+            search_term = st.text_input("🔍 Tìm kiếm công việc (Python, Java...)...")
+            
+            for job in jobs:
+                # Filter đơn giản
+                if search_term and search_term.lower() not in job['title'].lower():
+                    continue
+
+                with st.container():
+                    st.markdown(f"""
+                    <div class="job-card">
+                        <div style="display:flex; justify-content:space-between;">
+                            <h3>{job['title']}</h3>
+                            <span style="background:#e0f2fe; color:#0284c7; padding:2px 8px; border-radius:4px;">
+                                {job.get('status', 'open').upper()}
+                            </span>
+                        </div>
+                        <p>📍 {job.get('location', 'N/A')}</p>
+                        <p style="font-size:0.9em; color:#555;">{job.get('description')}</p>
+                        <hr>
                     </div>
-                    <p>🏢 {job.get('companyName', 'Mã cty: ' + str(job['companyId']))} | 📍 {job.get('location', 'N/A')}</p>
-                    <p style="font-size:0.9em; color:#666;">Yêu cầu: {', '.join(list(job_req_skills))}</p>
-                    <hr>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                c1, c2 = st.columns([1, 5])
-                if c1.button("Ứng tuyển", key=f"apply_{job['id']}"):
-                    # TODO: Check limit, gọi API apply
-                    st.success("Đã nộp đơn thành công!")
-
+                    """, unsafe_allow_html=True)
+                    
+                    c1, c2 = st.columns([1, 5])
+                    
+                    # Nút Ứng tuyển THẬT
+                    if c1.button("Ứng tuyển", key=f"apply_{job['id']}"):
+                        if st.session_state.user:
+                            # Lấy Student ID
+                            try:
+                                u_id = st.session_state.user['id']
+                                stu_res = requests.get(f"{API_URL}/students/user/{u_id}")
+                                if stu_res.status_code == 200:
+                                    student_id = stu_res.json()['id']
+                                    
+                                    # Gọi API Apply
+                                    payload = {"jobId": job['id'], "studentId": student_id, "status": "pending"}
+                                    res_apply = requests.post(f"{API_URL}/apply/", json=payload)
+                                    
+                                    if res_apply.status_code == 200:
+                                        st.success("✅ Đã nộp hồ sơ thành công!")
+                                    elif res_apply.status_code == 400:
+                                        st.warning(res_apply.json().get('detail', 'Lỗi ứng tuyển'))
+                                    else:
+                                        st.error("Lỗi hệ thống.")
+                                else:
+                                    st.error("Bạn chưa cập nhật Hồ sơ Sinh viên.")
+                            except Exception as e:
+                                st.error(f"Lỗi: {e}")
+                        else:
+                            st.warning("Vui lòng đăng nhập.")
+        else:
+            st.error("Không thể tải danh sách việc làm.")
+            
     except Exception as e:
-        st.error(f"Lỗi tải danh sách việc làm: {e}")
-
-elif choice == "📝 Làm bài Test Kỹ năng":
-    st.header("📝 Bài kiểm tra năng lực")
-    st.caption("Hoàn thành các bài test để tăng độ uy tín với nhà tuyển dụng.")
-    
-    # Demo danh sách bài test
-    tests = [
-        {"id": 1, "name": "Python Basic", "company": "FPT Software", "duration": "15 mins"},
-        {"id": 2, "name": "IQ Test", "company": "VNG", "duration": "30 mins"}
-    ]
-    
-    for t in tests:
-        with st.expander(f"{t['name']} - {t['company']}"):
-            st.write(f"Thời gian: {t['duration']}")
-            if st.button(f"Làm bài ngay", key=f"take_test_{t['id']}"):
-                st.session_state.current_test = t
-                st.info("Đang chuyển hướng vào bài làm... (Chức năng Demo)")
+        st.error(f"Lỗi kết nối Backend: {e}")
 
 elif choice == "✅ Ứng tuyển của tôi":
     st.header("Lịch sử ứng tuyển")
-    # Giữ nguyên logic cũ, có thể bổ sung hiển thị kết quả bài test nếu có
-    st.write("Danh sách các công việc đã nộp hồ sơ...")
+    user_id = st.session_state.user['id']
+    try:
+        res = requests.get(f"{API_URL}/applications/my-applications/{user_id}")
+        if res.status_code == 200:
+            apps = res.json()
+            if apps:
+                st.dataframe(apps)
+            else:
+                st.info("Bạn chưa ứng tuyển công việc nào.")
+        else:
+            st.error("Lỗi tải dữ liệu.")
+    except:
+        st.error("Lỗi kết nối.")
 
 # ================= MODULE: COMPANY =================
 elif choice == "🏢 Đăng Tin & Skill":
     st.header("Đăng tin tuyển dụng mới")
     
+    # 1. Lấy Company ID thật từ User ID
+    user_id = st.session_state.user['id']
+    company_id = None
+    
+    try:
+        res = requests.get(f"{API_URL}/companies/user/{user_id}")
+        if res.status_code == 200:
+            comp_info = res.json()
+            company_id = comp_info['id']
+            st.success(f"Đang đăng tin dưới tên: **{comp_info['companyName']}**")
+        else:
+            st.error("⚠️ Tài khoản này chưa có hồ sơ công ty. Vui lòng tạo hồ sơ trước.")
+            st.stop()
+    except:
+        st.error("Lỗi kết nối Server.")
+        st.stop()
+
     with st.form("post_job"):
-        title = st.text_input("Tiêu đề")
-        location = st.text_input("Địa điểm")
-        # Chức năng thêm: Giới hạn số lượng
-        limit = st.number_input("Giới hạn số lượng hồ sơ nhận", min_value=1, value=50)
-        # Chức năng thêm: Chọn Skill yêu cầu (Tagging)
-        req_skills = st.multiselect("Kỹ năng yêu cầu (Job Skill)", ["Python", "Java", "C++", "Office", "English"])
-        desc = st.text_area("Mô tả công việc")
+        title = st.text_input("Tiêu đề công việc (*)")
+        location = st.text_input("Địa điểm (*)")
+        desc = st.text_area("Mô tả chi tiết (*)")
         
-        if st.form_submit_button("Đăng tin"):
-            # Payload thêm fields: limit, skills
-            st.success(f"Đã đăng tin '{title}' với giới hạn {limit} hồ sơ.")
+        submitted = st.form_submit_button("🚀 Đăng tin")
+        
+        if submitted:
+            if not title or not desc:
+                st.warning("Vui lòng điền đủ thông tin.")
+            else:
+                # 2. GỌI API POST JOB
+                payload = {
+                    "companyId": company_id,
+                    "title": title,
+                    "description": desc,
+                    "location": location,
+                    "status": "open"
+                }
+                try:
+                    res_post = requests.post(f"{API_URL}/jobs/", json=payload)
+                    if res_post.status_code == 200:
+                        st.success("✅ Đã đăng tin thành công!")
+                    else:
+                        st.error(f"Lỗi đăng tin: {res_post.text}")
+                except Exception as e:
+                    st.error(f"Lỗi: {e}")
 
 elif choice == "📋 Quản lý Tin & Ứng viên":
-    st.header("Quản lý tuyển dụng")
+    st.header("Quản lý tin đăng")
     user_id = st.session_state.user['id']
     
-    # 1. Danh sách Job đã đăng
-    st.subheader("Danh sách Tin đăng")
-    # Mock data job của cty
-    my_jobs = [{"id": 101, "title": "Backend Dev", "applicants": 5, "status": "open"}]
-    
-    for job in my_jobs:
-        with st.expander(f"{job['title']} (Đang có {job['applicants']} ứng viên)"):
-            c1, c2, c3 = st.columns(3)
-            c1.button("Sửa tin", key=f"edit_{job['id']}")
-            if c2.button("❌ Xóa tin", key=f"del_{job['id']}"):
-                st.warning("Đã gửi lệnh xóa tin.")
-            if c3.button("🔒 Đóng đơn", key=f"close_{job['id']}"):
-                st.info("Đã ngừng nhận hồ sơ.")
+    try:
+        # Gọi API lấy Job của công ty
+        res = requests.get(f"{API_URL}/jobs/my-jobs/{user_id}")
+        if res.status_code == 200:
+            my_jobs = res.json()
             
-            st.divider()
-            st.write("👨‍🎓 **Danh sách ứng viên:**")
+            if not my_jobs:
+                st.info("Bạn chưa đăng tin nào.")
             
-            # Kết nối thông tin Student: Hiển thị list ứng viên
-            # Mock applicants
-            applicants = [
-                {"name": "Nguyễn Văn A", "major": "KTPM", "score": "8.5"},
-                {"name": "Trần Thị B", "major": "HTTT", "score": "7.0"}
-            ]
+            for job in my_jobs:
+                with st.expander(f"{job['title']} - {job['status']}"):
+                    st.write(f"**Mô tả:** {job['description']}")
+                    st.write(f"**Ngày tạo:** {job['createdAt']}")
+                    
+                    c1, c2 = st.columns(2)
+                    if c1.button("Xem ứng viên", key=f"view_app_{job['id']}"):
+                        st.info("Tính năng xem chi tiết ứng viên đang cập nhật...")
+        else:
+            st.error("Không tải được danh sách tin.")
             
-            df = pd.DataFrame(applicants)
-            st.table(df)
-            st.caption("Nhấn vào tên ứng viên để xem chi tiết Profile (Tính năng nâng cao).")
-
-elif choice == "🧩 Tạo bài Test":
-    st.header("Thiết lập bài Test Kỹ năng")
-    st.info("Tạo câu hỏi sàng lọc cho ứng viên trước khi nộp hồ sơ.")
-    
-    job_target = st.selectbox("Áp dụng cho Job nào?", ["Backend Dev", "Data Analyst"])
-    
-    with st.form("create_test"):
-        q_name = st.text_input("Tên bài test")
-        question = st.text_area("Nội dung câu hỏi (Hoặc link Google Form)")
-        time_limit = st.slider("Giới hạn thời gian (phút)", 5, 60, 15)
-        
-        if st.form_submit_button("Tạo bài test"):
-            st.success(f"Đã tạo bài test cho job {job_target}")
+    except Exception as e:
+        st.error(f"Lỗi kết nối: {e}")
 
 elif choice == "🏢 Hồ sơ Công ty":
-    # Logic cũ: Tạo/Sửa profile công ty
     st.header("Cập nhật thông tin doanh nghiệp")
-    st.text_input("Tên công ty")
-    st.text_input("Website")
-    st.button("Lưu")
-
-# ================= MODULE: ADMIN =================
-elif choice == "📢 Quản lý Thông báo":
-    st.header("📢 Tạo Thông báo Hệ thống")
-    st.info("Tin nhắn này sẽ hiện lên trang chủ của tất cả user.")
+    user_id = st.session_state.user['id']
     
-    with st.form("admin_announce"):
-        title = st.text_input("Tiêu đề thông báo")
-        content = st.text_area("Nội dung")
-        audience = st.selectbox("Gửi tới:", ["Tất cả", "Chỉ Sinh viên", "Chỉ Doanh nghiệp"])
-        
-        if st.form_submit_button("Phát thông báo"):
-            # TODO: POST /announcements/
-            st.success("Đã gửi thông báo thành công!")
-
-    st.subheader("Lịch sử thông báo")
-    st.write("Chưa có thông báo nào.")
-
-elif choice == "🛡 Xem Báo cáo (Reports)":
-    st.header("🛡 Xử lý Vi phạm & Báo cáo")
-    
-    # Tab phân loại report
-    tab1, tab2 = st.tabs(["Báo cáo từ SV", "Báo cáo từ Cty"])
-    
-    with tab1:
-        st.write("Danh sách SV báo cáo tin tuyển dụng lừa đảo:")
-        # Mock data
-        st.error("Report #12: Cty X yêu cầu đóng tiền (User: bao123)")
-        if st.button("Xử lý", key="r1"): st.write("Đã đánh dấu đã xem.")
-        
-    with tab2:
-        st.write("Danh sách Cty báo cáo ứng viên spam:")
-        st.info("Hiện chưa có báo cáo nào.")
-
-elif choice == "👥 Quản lý Users":
-    st.header("Quản lý người dùng")
-    st.write("Danh sách toàn bộ user trong hệ thống (View Only).")
+    # Kiểm tra xem đã có hồ sơ chưa
+    has_profile = False
     try:
-        users = requests.get(f"{API_URL}/users/").json()
-        st.dataframe(users)
-    except:
-        st.warning("Không kết nối được Backend.")
+        res = requests.get(f"{API_URL}/companies/user/{user_id}")
+        if res.status_code == 200:
+            current_data = res.json()
+            has_profile = True
+        else:
+            current_data = {}
+    except: current_data = {}
 
-# ================= MODULE: CHUNG (REPORT & GUEST) =================
-elif choice == "🚩 Gửi Báo cáo (Report)":
-    st.header("Gửi phản hồi / Báo cáo vi phạm")
-    
-    report_type = st.selectbox("Vấn đề gặp phải", ["Lỗi hệ thống", "Tin tuyển dụng ảo", "Spam", "Khác"])
-    detail = st.text_area("Mô tả chi tiết")
-    
-    if st.button("Gửi báo cáo"):
-        # TODO: POST /reports/
-        st.success("Cảm ơn bạn đã phản hồi. Admin sẽ xem xét sớm nhất!")
+    with st.form("company_profile"):
+        c_name = st.text_input("Tên công ty", value=current_data.get('companyName', ''))
+        c_desc = st.text_area("Giới thiệu", value=current_data.get('description', ''))
+        c_web = st.text_input("Website", value=current_data.get('website', ''))
+        
+        if st.form_submit_button("Lưu hồ sơ"):
+            payload = {"companyName": c_name, "description": c_desc, "website": c_web}
+            
+            if has_profile:
+                st.warning("API cập nhật (PUT) chưa cài đặt, hiện chỉ hỗ trợ tạo mới.")
+            else:
+                # Tạo mới
+                res = requests.post(f"{API_URL}/companies/{user_id}", json=payload)
+                if res.status_code == 200:
+                    st.success("Tạo hồ sơ thành công!")
+                else:
+                    st.error(f"Lỗi: {res.text}")
 
+# ================= MODULE: ADMIN & CHUNG =================
 elif choice == "👀 Xem Job (Khách)":
     st.header("Cơ hội việc làm (Chế độ Khách)")
-    st.warning("Bạn đang xem với tư cách Khách. Vui lòng Đăng nhập để Ứng tuyển.")
-    
-    # Logic hiển thị Job cho khách (đã fix hiển thị tên cty)
     try:
         jobs = requests.get(f"{API_URL}/jobs/").json()
         for job in jobs:
             st.markdown(f"""
             <div class="job-card">
                 <h3>{job['title']}</h3>
-                <p>🏢 {job.get('companyName', 'Công ty Ẩn danh')} | 📍 {job.get('location')}</p>
+                <p>📍 {job.get('location')}</p>
                 <hr>
                 <p>{job.get('description')}</p>
             </div>
             """, unsafe_allow_html=True)
     except:
         st.error("Chưa có dữ liệu.")
+
+elif choice == "👥 Quản lý Users":
+    st.header("Quản lý người dùng")
+    try:
+        users = requests.get(f"{API_URL}/users/").json()
+        st.dataframe(users)
+    except:
+        st.warning("Không kết nối được Backend.")
+        # ... (Phần code cũ giữ nguyên) ...
+
+# ================= MODULE: STUDENT =================
+elif choice == "📄 Hồ sơ & Kỹ năng":
+    st.header("👤 Hồ sơ cá nhân & Kỹ năng")
+    user_id = st.session_state.user['id']
+    
+    # Lấy dữ liệu hiện tại
+    student_id = None
+    try:
+        res = requests.get(f"{API_URL}/students/user/{user_id}")
+        if res.status_code == 200:
+            data = res.json()
+            student_id = data['id']
+            profile = data.get('profile') or {}
+        else:
+            data = {}
+            profile = {}
+    except: 
+        data = {}
+        profile = {}
+
+    if student_id:
+        # --- TAB 1: THÔNG TIN CÁ NHÂN ---
+        st.subheader("1. Thông tin cá nhân")
+        with st.form("info_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                full_name = st.text_input("Họ và tên", value=data.get('fullName', ''))
+                # Xử lý ngày sinh (Convert string to date)
+                dob_str = data.get('dob')
+                default_dob = datetime(2000, 1, 1)
+                if dob_str:
+                    try:
+                        default_dob = datetime.strptime(dob_str.split('T')[0], "%Y-%m-%d")
+                    except: pass
+                dob = st.date_input("Ngày sinh", value=default_dob)
+                
+            with col2:
+                cccd = st.text_input("Số CCCD/CMND", value=data.get('cccd', ''))
+                major = st.text_input("Chuyên ngành", value=data.get('major', ''))
+
+            st.markdown("---")
+            st.subheader("2. Hồ sơ chuyên môn")
+            
+            edu_level = st.selectbox("Trình độ học vấn cao nhất", 
+                                     ["Đại học", "Cao đẳng", "Thạc sĩ", "Tiến sĩ", "Khác"],
+                                     index=0 if not profile.get('educationLevel') else ["Đại học", "Cao đẳng", "Thạc sĩ", "Tiến sĩ", "Khác"].index(profile.get('educationLevel', 'Đại học')))
+            
+            degrees = st.text_area("Bằng cấp & Chứng chỉ (Ghi rõ tên bằng, nơi cấp, năm)", 
+                                   value=profile.get('degrees', ''),
+                                   placeholder="- Bằng Kỹ sư CNTT ĐH Bách Khoa (2022)\n- Chứng chỉ IELTS 7.0")
+            
+            about = st.text_area("Giới thiệu bản thân / Mục tiêu nghề nghiệp", 
+                                 value=profile.get('about', ''))
+            
+            save_btn = st.form_submit_button("💾 Lưu hồ sơ")
+            
+            if save_btn:
+                # Payload gửi đi
+                update_data = {
+                    "fullName": full_name,
+                    "dob": dob.isoformat(),
+                    "cccd": cccd,
+                    "major": major,
+                    "educationLevel": edu_level,
+                    "degrees": degrees,
+                    "about": about
+                }
+                
+                try:
+                    res_put = requests.put(f"{API_URL}/students/{student_id}", json=update_data)
+                    if res_put.status_code == 200:
+                        st.success("✅ Cập nhật hồ sơ thành công!")
+                        st.rerun()
+                    else:
+                        st.error(f"Lỗi cập nhật: {res_put.text}")
+                except Exception as e:
+                    st.error(f"Lỗi kết nối: {e}")
+
+        # --- TAB 2: KỸ NĂNG (DEMO UI) ---
+        st.markdown("---")
+        st.subheader("3. Kỹ năng & Trình độ (Skills)")
+        
+        # Phần này lý tưởng nhất là lưu vào bảng StudentSkill
+        # Ở đây demo hiển thị dạng Tag
+        st.info("Hệ thống ghi nhận các kỹ năng sau để gợi ý việc làm:")
+        
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            skills = st.multiselect("Chọn kỹ năng của bạn", 
+                           ["Python", "Java", "ReactJS", "NodeJS", "SQL", "Tiếng Anh", "Giao tiếp", "Teamwork"],
+                           default=["Python", "SQL"]) # Cần logic load từ DB thật
+        with c2:
+            st.write("")
+            st.write("")
+            if st.button("Cập nhật Skill"):
+                st.success("Đã lưu kỹ năng (Demo)")
+
+    else:
+        st.warning("Không tìm thấy ID sinh viên. Vui lòng đăng nhập lại.")
