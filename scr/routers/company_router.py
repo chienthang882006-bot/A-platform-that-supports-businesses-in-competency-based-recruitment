@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from database import db_session
+from scr.database import db_session
 from models import Job, Company, Application, ApplicationStatus
 from models.job_models import Job, SkillTest
 from models.user_models import Company, Student

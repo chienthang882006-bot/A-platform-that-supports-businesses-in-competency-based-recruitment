@@ -1,6 +1,6 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
-from database import db_session, init_db
+from scr.database import db_session, init_db
 from routers.user_router import user_bp
 from routers.recruitment_router import recruitment_bp
 from routers.student_router import student_bp

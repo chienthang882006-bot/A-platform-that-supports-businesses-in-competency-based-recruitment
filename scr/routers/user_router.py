@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from database import db_session
+from scr.database import db_session
 from models.user_models import User, UserRole, Student, Notification
 from datetime import datetime
 from models.user_models import Company

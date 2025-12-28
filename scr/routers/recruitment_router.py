@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from database import db_session
+from scr.database import db_session
 from models import Job, Application, Student, Company, ApplicationStatus
 
 recruitment_bp = Blueprint('recruitment_router', __name__)
