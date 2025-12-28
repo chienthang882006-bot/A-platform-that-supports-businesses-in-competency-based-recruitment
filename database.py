@@ -1,8 +1,13 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, scoped_session
 
-# Bạn có thể thay đổi đường dẫn này thành MySQL hoặc PostgreSQL
 DATABASE_URL = "sqlite:///./RecruitmentApp.db"
 
-engine = create_engine(DATABASE_URL, echo=True) # echo=True để log lệnh SQL ra màn hình debug
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine = create_engine(DATABASE_URL, echo=True)
+# Sử dụng scoped_session để đảm bảo an toàn luồng trong Flask
+db_session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
+
+def init_db():
+    from models.base import Base
+    import models # Import để nhận diện tất cả các bảng
+    Base.metadata.create_all(bind=engine)

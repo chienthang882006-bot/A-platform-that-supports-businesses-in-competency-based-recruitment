@@ -1,58 +1,34 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from database import engine
-from models.base import Base
+from flask import Flask, jsonify
+from flask_cors import CORS
+from database import db_session, init_db
+from routers.user_router import user_bp
+from routers.recruitment_router import recruitment_bp
+from routers.student_router import student_bp
+from routers.company_router import company_bp
 
-# Import routers
-from routers import user_router, recruitment_router
 
-# Tạo bảng database nếu chưa có
-Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Hệ thống Tuyển dụng API")
 
-# --- CẤU HÌNH CORS (Cho phép Frontend kết nối) ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], # Cho phép mọi nguồn kết nối (trong thực tế nên giới hạn)
-    allow_credentials=True,
-    allow_methods=["*"], # Cho phép tất cả các phương thức (GET, POST...)
-    allow_headers=["*"],
-)
+app = Flask(__name__)
+CORS(app) # Cho phép Frontend (Streamlit/React) gọi API
 
-# Đăng ký các router
-app.include_router(user_router.router)
-app.include_router(recruitment_router.router)
+# Khởi tạo DB
+init_db()
 
-@app.get("/")
+# Đăng ký các cụm API
+app.register_blueprint(user_bp, url_prefix="/api")
+app.register_blueprint(recruitment_bp, url_prefix="/api")
+app.register_blueprint(student_bp, url_prefix="/api")
+app.register_blueprint(company_bp, url_prefix="/api")
+
+
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db_session.remove()
+
+@app.route("/")
 def root():
-    return {"message": "Server đang chạy thành công!"}
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from database import engine
-from models.base import Base
+    return jsonify({"message": "User API is running!"})
 
-# Import routers
-from routers import user_router, recruitment_router
-
-# Tạo bảng database nếu chưa có
-Base.metadata.create_all(bind=engine)
-
-app = FastAPI(title="Hệ thống Tuyển dụng API")
-
-# --- CẤU HÌNH CORS (Cho phép Frontend kết nối) ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], # Cho phép mọi nguồn kết nối (trong thực tế nên giới hạn)
-    allow_credentials=True,
-    allow_methods=["*"], # Cho phép tất cả các phương thức (GET, POST...)
-    allow_headers=["*"],
-)
-
-# Đăng ký các router
-app.include_router(user_router.router)
-app.include_router(recruitment_router.router)
-
-@app.get("/")
-def root():
-    return {"message": "Server đang chạy thành công!"}
+if __name__ == "__main__":
+    app.run(debug=True, port=8000)

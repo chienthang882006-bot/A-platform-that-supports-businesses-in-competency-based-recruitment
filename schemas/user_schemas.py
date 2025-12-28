@@ -66,3 +66,10 @@ class CompanyResponse(CompanyBase):
     userId: int
     class Config:
         from_attributes = True
+class NotificationResponse(BaseModel):
+    id: int
+    content: str
+    isRead: bool
+    createdAt: datetime
+    class Config:
+        from_attributes = True #
