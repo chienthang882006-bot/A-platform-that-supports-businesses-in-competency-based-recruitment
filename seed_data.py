@@ -1,5 +1,5 @@
 # FILE: seed_data.py
-from scr.database import SessionLocal
+from database import SessionLocal
 from models import User, Student, StudentProfile, UserRole, Job, Company
 from datetime import datetime
 

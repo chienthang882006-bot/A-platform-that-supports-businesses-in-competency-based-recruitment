@@ -1,9 +1,22 @@
+# models/app_models.py
 import enum
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Enum
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .base import Base
 
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    userId = Column(Integer, ForeignKey("users.id")) 
+    content = Column(String)
+    isRead = Column(Boolean, default=False)
+    createdAt = Column(DateTime, default=datetime.utcnow)
+
+
+    user = relationship("User", back_populates="notifications")
 # Enum trạng thái ứng tuyển
 class ApplicationStatus(enum.Enum):
     PENDING = "pending"
@@ -11,6 +24,7 @@ class ApplicationStatus(enum.Enum):
     OFFERED = "offered"
     REJECTED = "rejected"
     ACCEPTED = "accepted"
+    TESTING = "testing" # Thêm trạng thái này để khớp với logic làm bài test
 
 class Application(Base):
     __tablename__ = 'applications'
@@ -18,12 +32,13 @@ class Application(Base):
     studentId = Column(Integer, ForeignKey('students.id'))
     jobId = Column(Integer, ForeignKey('jobs.id'))
     
-    # Sử dụng Enum hoặc String với default
+    # Sử dụng Enum
     status = Column(Enum(ApplicationStatus), default=ApplicationStatus.PENDING)
     
     appliedAt = Column(DateTime, default=datetime.utcnow)
     updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Quan hệ
     student = relationship("Student", back_populates="applications")
     job = relationship("Job", back_populates="applications")
     interviews = relationship("Interview", back_populates="application")
@@ -46,7 +61,6 @@ class InterviewFeedback(Base):
     id = Column(Integer, primary_key=True, index=True)
     interviewId = Column(Integer, ForeignKey('interviews.id'))
     
-    # CẬP NHẬT: Feedback phỏng vấn thường dài
     feedback = Column(Text) 
     rating = Column(Integer)
 
@@ -58,7 +72,6 @@ class Evaluation(Base):
     applicationId = Column(Integer, ForeignKey('applications.id'))
     skillScore = Column(Integer)
     
-    # CẬP NHẬT: Nhận xét chi tiết
     peerReview = Column(Text) 
     improvement = Column(Text)
 
@@ -69,7 +82,6 @@ class Offer(Base):
     id = Column(Integer, primary_key=True, index=True)
     applicationId = Column(Integer, ForeignKey('applications.id'))
     
-    # CẬP NHẬT: Chi tiết offer (lương, thưởng, phúc lợi) rất dài
     offerDetail = Column(Text) 
     status = Column(String) # Pending, Accepted, Declined
 
@@ -78,11 +90,13 @@ class Offer(Base):
 class TestResult(Base):
     __tablename__ = 'test_results'
     id = Column(Integer, primary_key=True, index=True)
-    testId = Column(Integer, ForeignKey('skill_tests.id'))
+    # Lưu ý: bảng skill_tests được định nghĩa bên job_models.py
+    testId = Column(Integer, ForeignKey('skill_tests.id')) 
     studentId = Column(Integer, ForeignKey('students.id'))
     score = Column(Integer)
     submittedAt = Column(DateTime, default=datetime.utcnow)
 
+    # Quan hệ: String referenece giúp tránh circular import
     test = relationship("SkillTest", back_populates="test_results")
     student = relationship("Student", back_populates="test_results")
 
@@ -91,7 +105,7 @@ class Report(Base):
     id = Column(Integer, primary_key=True, index=True)
     companyId = Column(Integer, ForeignKey('companies.id'))
     reportType = Column(String)
-    content = Column(Text) # Thêm nội dung báo cáo
+    content = Column(Text)
     createdAt = Column(DateTime, default=datetime.utcnow)
 
     company = relationship("Company", back_populates="reports")

@@ -1,8 +1,14 @@
 from flask import Blueprint, request, jsonify
-from scr.database import db_session
-from models.user_models import User, UserRole, Student, Notification
+from database import db_session
 from datetime import datetime
-from models.user_models import Company
+from models.user_models import StudentProfile
+
+
+# 1. IMPORT MODELS CHÍNH XÁC
+# User, Student, Company nằm ở user_models
+from models.user_models import User, UserRole, Student, Company
+# Notification nằm ở app_models (theo các bước trước)
+from models.app_models import Notification 
 
 user_bp = Blueprint('user_router', __name__)
 
@@ -45,7 +51,7 @@ def create_user():
         # 1️⃣ Create User
         new_user = User(
             email=data["email"],
-            password=data["password"],  # ⚠️ demo, nên hash sau
+            password=data["password"],  # ⚠️ demo, thực tế nên hash password
             role=role_enum,
             status="active"
         )
@@ -62,7 +68,8 @@ def create_user():
             )
             db_session.add(student)
             db_session.commit()
-        # 3️⃣ ✅ THÊM ĐOẠN NÀY: Auto-create COMPANY
+        
+        # 3️⃣ Auto-create COMPANY if role = company
         if new_user.role == UserRole.COMPANY:
             company = Company(
                 userId=new_user.id,
@@ -80,11 +87,12 @@ def create_user():
 
     except Exception as e:
         db_session.rollback()
+        print(f"Error creating user: {e}")
         return jsonify({"detail": str(e)}), 500
 
 
 # =========================
-# LOGIN
+# LOGIN (ĐÃ FIX LỖI COLUMN ELEMENT)
 # =========================
 @user_bp.route("/login/", methods=["POST"])
 def login():
@@ -93,9 +101,11 @@ def login():
     if not data or not data.get("email") or not data.get("password"):
         return jsonify({"detail": "Thiếu email hoặc mật khẩu"}), 400
 
+    # LƯU Ý QUAN TRỌNG:
+    # Dùng dấu phẩy (,) để ngăn cách các điều kiện. KHÔNG ĐƯỢC DÙNG 'and'.
     user = db_session.query(User).filter(
-        User.email == data["email"],
-        User.password == data["password"]
+        User.email == data["email"],     # Điều kiện 1
+        User.password == data["password"] # Điều kiện 2 (tự động hiểu là AND)
     ).first()
 
     if not user:
@@ -110,10 +120,12 @@ def login():
 
 
 # =========================
-# GET NOTIFICATIONS
+# GET NOTIFICATIONS (API CHO CÁI CHUÔNG 🔔)
 # =========================
 @user_bp.route("/notifications/<int:user_id>", methods=["GET"])
 def get_notifications(user_id):
+    """Lấy danh sách thông báo của user"""
+    # Fix logic: Notification.userId (chứ không phải studentId)
     notifications = db_session.query(Notification).filter(
         Notification.userId == user_id
     ).order_by(Notification.createdAt.desc()).all()
@@ -122,12 +134,12 @@ def get_notifications(user_id):
         "id": n.id,
         "content": n.content,
         "isRead": n.isRead,
-        "createdAt": n.createdAt.isoformat()
+        "createdAt": n.createdAt.strftime("%Y-%m-%d %H:%M") # Format ngày giờ đẹp cho frontend
     } for n in notifications])
 
 
 # =========================
-# MARK NOTIFICATION AS READ
+# MARK NOTIFICATION AS READ (ĐÁNH DẤU ĐÃ ĐỌC)
 # =========================
 @user_bp.route("/notifications/read/<int:notif_id>", methods=["PUT"])
 def mark_as_read(notif_id):

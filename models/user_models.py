@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Enum, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .base import Base
+from models.job_models import Skill, StudentSkill
 
 class UserRole(enum.Enum):
     STUDENT = "student"
@@ -53,15 +54,6 @@ class StudentProfile(Base):
     
     student = relationship("Student", back_populates="profile")
 
-class Notification(Base):
-    __tablename__ = 'notifications'
-    id = Column(Integer, primary_key=True, index=True)
-    userId = Column(Integer, ForeignKey('users.id'))
-    content = Column(Text) # Sử dụng Text ở đây
-    isRead = Column(Boolean, default=False) # Sử dụng Boolean ở đây
-    createdAt = Column(DateTime, default=datetime.utcnow)
-    
-    user = relationship("User", back_populates="notifications")
 
 class Company(Base):
     __tablename__ = 'companies'

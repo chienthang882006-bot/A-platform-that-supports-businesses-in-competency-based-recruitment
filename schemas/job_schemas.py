@@ -1,6 +1,18 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from pydantic import BaseModel
+from typing import List
+
+class QuestionCreate(BaseModel):
+    content: str
+    options: str
+    correctAnswer: str
+
+class TestCreate(BaseModel):
+    testName: str
+    duration: int
+    questions: List[QuestionCreate]
 
 class JobBase(BaseModel):
     title: str
