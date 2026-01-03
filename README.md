@@ -9,7 +9,7 @@ Dưới đây là sơ đồ tổ chức mã nguồn theo đúng cấu trúc thư
 ```text
 scr/                            # Thư mục gốc chứa mã nguồn của bạn
 ├── api/                        # Tầng giao tiếp (Interface)
-│   ├── controllers/            # Điều hướng Request (Từ folder 'routers' cũ)
+│   ├── router/            # Điều hướng Request (Từ folder 'routers' cũ)
 │   │   ├── user_router.py         
 │   │   ├── recruitment_router.py  
 │   │   ├── student_router.py      
