@@ -45,7 +45,7 @@ def create_user():
     try:
         role_enum = UserRole(data.get("role", "student").lower())
     except ValueError:
-        role_enum = UserRole.STUDENT
+        role_enum = UserRole.STUDENT.value
 
     try:
         # 1️⃣ Create User
