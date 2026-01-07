@@ -5,6 +5,7 @@ from routers.user_router import user_bp
 from routers.recruitment_router import recruitment_bp
 from routers.student_router import student_bp
 from routers.company_router import company_bp
+from routers.admin_router import admin_bp
 
 
 app = Flask(__name__)
@@ -16,6 +17,7 @@ app.register_blueprint(user_bp, url_prefix="/api")
 app.register_blueprint(recruitment_bp, url_prefix="/api")
 app.register_blueprint(student_bp, url_prefix="/api")
 app.register_blueprint(company_bp, url_prefix="/api")
+app.register_blueprint(admin_bp, url_prefix="/api")
 @app.teardown_appcontext
 def shutdown_session(exception=None):
     db_session.remove()
