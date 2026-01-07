@@ -728,7 +728,7 @@ def company_create_job():
             <label>Địa điểm</label>
             <input name="location">
             <label>Số ứng viên tối đa</label>
-            <input name="maxApplicants" type="number" min="1" placeholder="Ví dụ: 10">
+            <input name="maxApplicants" type="number" min="1">
         </div>
         <div class="job-card" style="border-left: 6px solid #2563eb; background:#f8fafc;">
             <label style="display:flex; align-items:center; cursor:pointer; color:#2563eb;">
@@ -742,7 +742,7 @@ def company_create_job():
                     <div style="flex:1;"><label>Thời gian (phút)</label><input type="number" name="duration" value="30"></div>
                     <div style="flex:1;"><label>Tổng điểm</label><input type="number" name="totalScore" value="100"></div>
                 </div>
-                <label>Danh sách câu hỏi (Tự luận):</label>
+                <label>Danh sách câu hỏi :</label>
                 <div id="questions-container"></div>
                 <button type="button" onclick="addQuestion()" style="background:#475569; width:auto; padding:8px 15px; margin-top:10px;">+ Thêm câu hỏi</button>
             </div>
@@ -842,7 +842,7 @@ def company_edit_job(job_id):
                     <div style="flex:1;"><label>Thời gian</label><input type="number" name="duration" value="{current_test.get('duration', 30) if current_test else 30}"></div>
                     <div style="flex:1;"><label>Tổng điểm</label><input type="number" name="totalScore" value="{current_test.get('totalScore', 100) if current_test else 100}"></div>
                 </div>
-                <h4 style="margin-top:20px;">Danh sách câu hỏi (Tự luận):</h4>
+                <h4 style="margin-top:20px;">Danh sách câu hỏi :</h4>
                 <div id="questions-container"></div>
                 <button type="button" onclick="addQuestionInput()" style="background:#475569; margin-top:15px; width:auto; padding:8px 15px; font-size:13px;">+ Thêm câu hỏi</button>
             </div>
@@ -860,7 +860,7 @@ def company_edit_job(job_id):
             var div = document.createElement("div");
             div.style.marginBottom = "15px"; div.style.padding = "15px"; div.style.background = "white"; div.style.border = "1px solid #cbd5e1";
             // [CẬP NHẬT] Giao diện edit chỉ còn textarea nội dung
-            div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:8px;">Câu hỏi (Tự luận)</div>
+            div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:8px;">Câu hỏi </div>
             <textarea name="q_content[]" placeholder="Nội dung câu hỏi..." required style="margin-bottom:8px; width:100%;" rows="3">${{content}}</textarea>
             <button type="button" onclick="this.parentElement.remove()" style="background:#ef4444; width:auto; padding:4px 10px; font-size:11px; margin-top:5px;">Xóa</button>`;
             container.appendChild(div);
