@@ -8,7 +8,7 @@ from models.app_models import Application, ApplicationStatus, Evaluation, TestRe
 company_bp = Blueprint("company_router", __name__)
 
 # =========================
-# GET ALL JOBS BY COMPANY (MỚI - ĐỂ FIX LỖI HÌNH 3)
+# GET ALL JOBS BY COMPANY
 # =========================
 @company_bp.route("/companies/<int:company_id>/jobs", methods=["GET"])
 def get_jobs_by_company(company_id):
@@ -49,7 +49,7 @@ def get_company_by_user(user_id):
 
 
 # =========================
-# CREATE JOB & TEST (GỘP CHUNG - ĐÃ FIX)
+# CREATE JOB & TEST
 # =========================
 @company_bp.route("/jobs/", methods=["POST"])
 def create_job():
@@ -83,7 +83,6 @@ def create_job():
                 new_question = Question(
                     testId=new_test.id,
                     content=q["content"],
-                    # Đảm bảo options lưu dưới dạng chuỗi nếu model yêu cầu
                     options=str(q["options"]), 
                     correctAnswer=q["correctAnswer"]
                 )
@@ -105,7 +104,7 @@ def create_job():
 
 
 # =========================
-# CREATE SKILL TEST FOR JOB (GIỮ LẠI - DÙNG CHO JOB ĐÃ CÓ)
+# CREATE SKILL TEST FOR JOB
 # =========================
 @company_bp.route("/jobs/<int:job_id>/test", methods=["POST"])
 def create_skill_test(job_id):
@@ -145,7 +144,6 @@ def create_skill_test(job_id):
 # =========================
 @company_bp.route("/companies/<int:company_id>/applications", methods=["GET"])
 def get_all_applications_for_company(company_id):
-    # Cách đơn giản và an toàn hơn:
     apps = db_session.query(Application).join(Job).filter(Job.companyId == company_id).all()   
     response = []
     for app in apps:
@@ -153,11 +151,8 @@ def get_all_applications_for_company(company_id):
         job = app.job        
         # Tìm điểm test (nếu có)
         test_score = "N/A"
-        # Logic: Tìm test result khớp với bài test của job này
         if job.skill_tests: 
-            # Lưu ý: trong models Job.skill_tests đang là list, lấy phần tử đầu tiên
             current_test = job.skill_tests[0] if isinstance(job.skill_tests, list) and job.skill_tests else job.skill_tests           
-            # Tìm kết quả
             tr = db_session.query(TestResult).filter(
                 TestResult.studentId == student.id,
                 TestResult.testId == current_test.id
@@ -176,9 +171,8 @@ def get_all_applications_for_company(company_id):
     return jsonify(response)
 
 
-
 # =========================
-# XEM KẾT QUẢ KIỂM TRA THEO VỊ TRÍ CÔNG VIỆC
+# XEM KẾT QUẢ KIỂM TRA
 # =========================
 @company_bp.route("/jobs/<int:job_id>/test-results", methods=["GET"])
 def view_test_results(job_id):
@@ -204,7 +198,7 @@ def view_test_results(job_id):
 
 
 # =========================
-# EVALUATE APPLICATIONS (CÓ GỬI THÔNG BÁO)
+# EVALUATE APPLICATIONS (CẬP NHẬT: GỬI LỊCH PHỎNG VẤN)
 # =========================
 @company_bp.route("/applications/<int:app_id>/evaluate", methods=["POST"])
 def evaluate_application(app_id):
@@ -218,34 +212,69 @@ def evaluate_application(app_id):
             improvement=data.get("improvement")
         )
         db_session.add(evaluation)
+        
         # B. Cập nhật trạng thái Application & Tạo thông báo
         app = db_session.query(Application).filter(Application.id == app_id).first()       
         if app:
             next_status = data.get("nextStatus") # 'interview' hoặc 'rejected'
             notif_content = ""
-            # Xử lý logic trạng thái
+            
+            # 1. TRƯỜNG HỢP DUYỆT PHỎNG VẤN
             if next_status == "interview":
                 app.status = ApplicationStatus.INTERVIEW
-                notif_content = f"🎉 Chúc mừng! Hồ sơ ứng tuyển '{app.job.title}' của bạn đã được DUYỆT phỏng vấn."
+                
+                # Lấy thông tin phỏng vấn từ request
+                interview_time = data.get("interviewTime")      # Dạng chuỗi hoặc datetime
+                interview_location = data.get("interviewLocation")
+                interview_note = data.get("interviewNote")
+
+                # Lưu vào bảng Interview (nếu model Interview hỗ trợ các trường này)
+                # Lưu ý: Nếu model Interview của bạn chưa có các cột này, bạn có thể cần cập nhật DB Schema
+                try:
+                    # Giả sử model Interview có cấu trúc: applicationId, scheduleTime, location, note
+                    new_interview = Interview(
+                        applicationId=app.id,
+                        scheduleTime=interview_time,
+                        location=interview_location,
+                        note=interview_note
+                    )
+                    db_session.add(new_interview)
+                except Exception as ex_inv:
+                    print(f"Lưu interview record thất bại (có thể do thiếu cột DB): {ex_inv}")
+
+                # Tạo nội dung thông báo chi tiết
+                notif_content = f"🎉 Chúc mừng! Hồ sơ '{app.job.title}' đã được DUYỆT phỏng vấn."
+                if interview_time:
+                    notif_content += f" ⏰ Thời gian: {interview_time}."
+                if interview_location:
+                    notif_content += f" 📍 Địa điểm: {interview_location}."
+                if interview_note:
+                    notif_content += f" 📝 Ghi chú: {interview_note}."
+
+            # 2. TRƯỜNG HỢP TỪ CHỐI
             elif next_status == "rejected":
                 app.status = ApplicationStatus.REJECTED
                 notif_content = f"⚠️ Rất tiếc, hồ sơ ứng tuyển '{app.job.title}' của bạn đã bị từ chối."
-            # C. Gửi thông báo cho Student (Dựa vào userId của student)
+
+            # C. Gửi thông báo cho Student
             if notif_content and app.student:
                 new_notif = Notification(
-                    userId=app.student.userId, # Quan trọng: Gửi vào ID user của sinh viên
+                    userId=app.student.userId,
                     content=notif_content,
                     isRead=False
                 )
                 db_session.add(new_notif)
+
         db_session.commit()
         return jsonify({"message": "Đã đánh giá và gửi thông báo thành công"}), 201
     except Exception as e:
         db_session.rollback()
         print(f"Lỗi đánh giá: {e}")
         return jsonify({"detail": f"Lỗi server: {str(e)}"}), 500
+
+
 # =========================
-# GET JOB DETAIL (LẤY CHI TIẾT ĐỂ SỬA)
+# GET JOB DETAIL
 # =========================
 @company_bp.route("/jobs/<int:job_id>", methods=["GET"])
 def get_job_detail(job_id):
@@ -265,29 +294,26 @@ def get_job_detail(job_id):
 
 
 # =========================
-# UPDATE JOB (CẬP NHẬT JOB & TEST)
+# UPDATE JOB
 # =========================
 @company_bp.route("/jobs/<int:job_id>", methods=["PUT"])
 def update_job(job_id):
-    """API cập nhật thông tin job và bài test đi kèm"""
     data = request.json
     job = db_session.query(Job).filter(Job.id == job_id).first()
     if not job:
         return jsonify({"detail": "Job not found"}), 404
     try:
-        # 1. Cập nhật thông tin cơ bản của Job
+        # 1. Cập nhật thông tin cơ bản
         if "title" in data: job.title = data["title"]
         if "description" in data: job.description = data["description"]
         if "location" in data: job.location = data["location"]
         if "status" in data: job.status = data["status"]
         if "maxApplicants" in data:job.maxApplicants = data["maxApplicants"]
-        # 2. Xử lý cập nhật bài Test (nếu có gửi kèm)
+        # 2. Cập nhật bài Test
         if "test" in data:
             test_data = data["test"]           
-            # Tìm bài test cũ của job này (nếu có)
             skill_test = db_session.query(SkillTest).filter(SkillTest.jobId == job.id).first()
             if not skill_test:
-                # Nếu chưa có thì tạo mới
                 skill_test = SkillTest(
                     jobId=job.id,
                     testName=test_data.get("testName", f"Test for {job.title}"),
@@ -295,23 +321,20 @@ def update_job(job_id):
                     totalScore=test_data.get("totalScore", 100)
                 )
                 db_session.add(skill_test)
-                db_session.flush() # Lấy ID
+                db_session.flush()
             else:
-                # Nếu có rồi thì update thông tin
                 skill_test.testName = test_data.get("testName", skill_test.testName)
                 skill_test.duration = test_data.get("duration", skill_test.duration)
                 skill_test.totalScore = test_data.get("totalScore", skill_test.totalScore)
-            # 3. Cập nhật câu hỏi (Xóa cũ thêm mới cho đơn giản)
+            # 3. Cập nhật câu hỏi
             questions_data = test_data.get("questions", [])
             if questions_data:
-                # Xóa câu hỏi cũ
                 db_session.query(Question).filter(Question.testId == skill_test.id).delete()                
-                # Thêm câu hỏi mới
                 for q in questions_data:
                     new_q = Question(
                         testId=skill_test.id,
                         content=q["content"],
-                        options=str(q["options"]), # Lưu options dạng chuỗi
+                        options=str(q["options"]),
                         correctAnswer=q["correctAnswer"]
                     )
                     db_session.add(new_q)
@@ -323,19 +346,15 @@ def update_job(job_id):
         return jsonify({"detail": f"Lỗi cập nhật: {str(e)}"}), 500
     
 
-
 # =========================
-# GET APPLICATIONS BY JOB ID (THÊM MỚI ĐỂ FIX LỖI HÌNH 2)
+# GET APPLICATIONS BY JOB ID
 # =========================
 @company_bp.route("/jobs/<int:job_id>/applications", methods=["GET"])
 def get_applications_by_job(job_id):
-    """Lấy danh sách ứng viên chỉ thuộc về một Job cụ thể"""
-    # 1. Tìm tất cả đơn ứng tuyển có jobId khớp
     apps = db_session.query(Application).filter(Application.jobId == job_id).all() 
     response = []
     for app in apps:
         student = app.student       
-        # Lấy thêm thông tin CV url an toàn
         cv_url = "#"
         if hasattr(student, 'profile') and student.profile:
             cv_url = student.profile.cvUrl
@@ -344,6 +363,5 @@ def get_applications_by_job(job_id):
             "studentName": student.fullName,
             "status": app.status.value if hasattr(app.status, 'value') else app.status,
             "cvUrl": cv_url,
-            # Nếu muốn hiển thị thêm điểm test thì thêm logic query TestResult ở đây giống API dashboard
         })
     return jsonify(response)

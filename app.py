@@ -298,25 +298,23 @@ def student_home():
     done_test_ids = []
 
     try:
-        # 1) Lấy student trước (bắt buộc để gọi /jobs?studentId=)
+        # 1) Lấy student trước
         user_id = session['user']['id']
         stu_res = requests.get(f"{API_URL}/students/user/{user_id}", timeout=5)
         if stu_res.status_code != 200:
-            # Không có student -> show message
             return wrap_layout("<p>⚠️ Không tìm thấy hồ sơ sinh viên</p>")
         stu = stu_res.json()
         student_id = stu["id"]
 
-        # 2) Gọi API jobs kèm studentId để backend lọc job đã apply (nếu backend hỗ trợ)
+        # 2) Gọi API jobs
         try:
             res = requests.get(f"{API_URL}/jobs/", params={"studentId": student_id}, timeout=5)
             jobs = res.json() if res.status_code == 200 else []
         except Exception:
-            # fallback: lấy toàn bộ jobs nếu request bị lỗi
             res = requests.get(f"{API_URL}/jobs/", timeout=5)
             jobs = res.json() if res.status_code == 200 else []
 
-        # 3) Lấy danh sách application (fallback/đối chiếu)
+        # 3) Lấy danh sách application
         applied_res = requests.get(f"{API_URL}/students/{student_id}/applications", timeout=5)
         if applied_res.status_code == 200:
             applied_job_ids = [a["jobId"] for a in applied_res.json()]
@@ -326,7 +324,6 @@ def student_home():
             done_test_ids = [t["testId"] for t in test_done_res.json()]
 
     except Exception as e:
-        # Nếu có lỗi mạng/exception, hiển thị rỗng nhưng không crash
         print("Error loading student/home data:", e)
         jobs = []
 
@@ -338,15 +335,11 @@ def student_home():
         has_test = j.get("hasTest", False)
         test_id = j.get("testId", None)
 
-        # Nếu backend đã lọc applied nhưng frontend có fallback list -> tránh hiển thị
         if job_id in applied_job_ids:
             continue
-
-        # Nếu job đã đóng (nếu backend vẫn trả Closed), skip
         if str(j.get("status", "")).upper() == "CLOSED":
             continue
 
-        # 1) Có test nhưng chưa làm -> show nút làm test
         if has_test and test_id not in done_test_ids:
             content += f"""
             <div class="job-card">
@@ -359,7 +352,6 @@ def student_home():
                 </a>
             </div>
             """
-        # 2) Không test hoặc đã làm test -> cho apply
         else:
             content += f"""
             <div class="job-card">
@@ -388,11 +380,9 @@ def apply(job_id):
     )
     if res.status_code == 201:
         data = res.json()
-        # 🔥 JOB CÓ TEST
         if data.get("status") == "NEED_TEST":
-            session["current_job_id"] = job_id   # ⭐ BẮT BUỘC
+            session["current_job_id"] = job_id
             return redirect(f"/student/test/{data['testId']}")
-        # 🔥 JOB KHÔNG CÓ TEST
         if data.get("status") == "APPLIED":
             session["apply_message"] = "✅ Ứng tuyển thành công"
             return redirect("/student/home")
@@ -407,7 +397,6 @@ def student_profile():
     if 'user' not in session:
         return redirect('/login')
     user_id = session['user']['id']
-    # ===== LẤY STUDENT + PROFILE + SKILLS =====
     stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
     if stu_res.status_code != 200:
         return wrap_layout("<p>⚠️ Không tìm thấy hồ sơ sinh viên</p>")
@@ -417,9 +406,7 @@ def student_profile():
     skills = student.get("skills", [])
     skills_text = ", ".join([f"{s['name']}:{s['level']}" for s in skills])
     message = ""
-    # ===== LƯU HỒ SƠ =====
     if request.method == "POST":
-        # --- parse kỹ năng ---
         skills_raw = request.form.get("skills", "")
         skills_list = []
         for item in skills_raw.split(","):
@@ -430,16 +417,13 @@ def student_profile():
                     "level": int(level.strip())
                 })
         payload = {
-            # students
             "fullName": request.form.get("fullName"),
             "major": request.form.get("major"),
-            # student_profiles
             "about": request.form.get("about"),
             "educationLevel": request.form.get("educationLevel"),
             "degrees": request.form.get("degrees"),
             "cvUrl": request.form.get("cvUrl"),
             "portfolioUrl": request.form.get("portfolioUrl"),
-            # ⭐ KỸ NĂNG
             "skills": skills_list
         }
         res = requests.put(
@@ -448,7 +432,6 @@ def student_profile():
         )
         if res.status_code == 200:
             message = "<p style='color:green;'>✅ Hồ sơ đã được lưu</p>"
-            # reload data
             student = requests.get(f"{API_URL}/students/user/{user_id}").json()
             profile = student.get("profile") or {}
             skills = student.get("skills", [])
@@ -456,35 +439,26 @@ def student_profile():
         else:
             message = "<p style='color:red;'>❌ Lưu hồ sơ thất bại</p>"
 
-    # ===== FORM HIỂN THỊ =====
     content = f"""
     <h2>👤 Thông tin cá nhân</h2>
     {message}
     <form method="post">
         <label>Họ tên</label>
         <input name="fullName" value="{student.get('fullName','')}">
-
         <label>Ngành học</label>
         <input name="major" value="{student.get('major','')}">
-
         <label>Giới thiệu</label>
         <textarea name="about">{profile.get('about','')}</textarea>
-
         <label>Trình độ học vấn</label>
         <input name="educationLevel" value="{profile.get('educationLevel','')}">
-
         <label>Bằng cấp</label>
         <input name="degrees" value="{profile.get('degrees','')}">
-
         <label>Link CV</label>
         <input name="cvUrl" value="{profile.get('cvUrl','')}">
-
         <label>Portfolio</label>
         <input name="portfolioUrl" value="{profile.get('portfolioUrl','')}">
-
         <label>Kỹ năng </label>
         <input name="skills" value="{skills_text}">
-
         <button>💾 Lưu hồ sơ</button>
     </form>
     """
@@ -519,7 +493,6 @@ def student_tests(job_id):
     user_id = session['user']['id']
     stu = requests.get(f"{API_URL}/students/user/{user_id}").json()
     student_id = stu["id"]
-    # 👉 GỌI START TEST (BACKEND)
     start_res = requests.post(
         f"{API_URL}/tests/start",
         json={"studentId": student_id, "jobId": job_id}
@@ -534,53 +507,48 @@ def student_tests(job_id):
 def student_do_test(test_id):
     if 'user' not in session:
         return redirect('/login')
-    # Lấy student id
     user_id = session['user']['id']
     stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
     if stu_res.status_code != 200:
         return wrap_layout("<p>❌ Không tìm thấy sinh viên</p>")
     student_id = stu_res.json()["id"]
-    # 1) Lấy test detail (chứa jobId)
     res = requests.get(f"{API_URL}/tests/{test_id}")
     if res.status_code != 200:
         return wrap_layout("<p>❌ Không tìm thấy bài test</p>")
     test = res.json()
     job_id = test.get("jobId")
-    # 2) Nếu session chưa có current_job_id, dùng jobId từ test
     if not session.get("current_job_id") and job_id:
         session["current_job_id"] = job_id
 
     job_to_start = session.get("current_job_id") or job_id
     if not job_to_start:
         return wrap_layout("<p>❌ Bài test chưa liên kết với job</p>")
-    # 3) Gọi start (tạo TestResult nếu chưa có)
     start_res = requests.post(
         f"{API_URL}/tests/start",
         json={"studentId": student_id, "jobId": job_to_start}
     )
     if start_res.status_code not in [200, 201]:
-        # show backend message để debug
         try:
             msg = start_res.json().get("detail") or start_res.text
         except:
             msg = start_res.text
         return wrap_layout(f"<p>❌ Không thể bắt đầu bài test: {msg}</p>")
-    # 4) Render form (kèm hidden jobId để an toàn)
     questions_html = ""
     for idx, q in enumerate(test.get("questions", []), start=1):
+        # [CẬP NHẬT] Đổi từ input text sang textarea cho câu hỏi tự luận
         questions_html += f"""
         <div class="job-card">
             <b>Câu {idx}:</b> {q['content']}<br>
-            <input type="text" name="answer_{q['id']}" placeholder="Nhập câu trả lời của bạn" required>
+            <textarea name="answer_{q['id']}" placeholder="Nhập câu trả lời tự luận của bạn..." required rows="5" style="width:100%; margin-top:10px;"></textarea>
         </div>
         """
     content = f"""
-    <h2>📝 {test.get('testName')}</h2>
+    <h2>📝 {test.get('testName')} (Tự luận)</h2>
     <p>⏱ Thời gian: {test.get('duration')} phút</p>
     <form method="post" action="/student/test/submit/{test_id}">
         <input type="hidden" name="jobId" value="{job_to_start}">
         {questions_html}
-        <button type="submit">📤 Nộp bài test</button>
+        <button type="submit" style="margin-top:20px;">📤 Nộp bài test</button>
     </form>
     """
     return wrap_layout(content)
@@ -590,31 +558,26 @@ def student_do_test(test_id):
 def student_test_submit(test_id):
     if 'user' not in session:
         return redirect('/login')
-    # Lấy student id
     user_id = session['user']['id']
     stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
     if stu_res.status_code != 200:
         session["apply_message"] = "❌ Lỗi: không tìm thấy sinh viên"
         return redirect("/student/home")
     student_id = stu_res.json()["id"]
-    # Thu câu trả lời (nếu cần gửi lên backend)
     answers = dict(request.form)
-    # 1) Submit kết quả test
     submit_payload = {
         "studentId": student_id,
-        "score": 0,       # nếu bạn chấm ở client thì gửi score phù hợp
+        "score": 0,       
         "answers": answers
     }
     submit_res = requests.post(f"{API_URL}/tests/{test_id}/submit", json=submit_payload)
     if submit_res.status_code not in (200, 201):
-        # show backend lỗi
         try:
             msg = submit_res.json().get("detail") or submit_res.text
         except:
             msg = submit_res.text
         session["apply_message"] = f"❌ Lỗi nộp bài: {msg}"
         return redirect("/student/home")
-    # 2) Sau khi submit test thành công → cố gắng apply (nếu chưa apply)
     job_id = session.pop("current_job_id", None) or request.form.get("jobId")
     if job_id:
         try:
@@ -622,23 +585,19 @@ def student_test_submit(test_id):
                 f"{API_URL}/apply/",
                 json={"studentId": student_id, "jobId": int(job_id)}
             )
-            # 200/201: đã apply thành công hoặc đã có application trước đó
             if apply_res.status_code in (200, 201):
                 data = {}
                 try:
                     data = apply_res.json()
                 except:
                     data = {}
-                # Nếu backend trả ALREADY_APPLIED hoặc APPLIED/NEED_TEST -> thông báo tương ứng
                 if data.get("status") in ("ALREADY_APPLIED", "APPLIED"):
                     session["apply_message"] = "✅ Hoàn thành bài test & đã ứng tuyển"
                 elif data.get("status") == "NEED_TEST":
-                    # trường hợp hiếm: backend yêu cầu test tiếp (chưa xảy ra), coi là success
                     session["apply_message"] = "✅ Hoàn thành bài test, hồ sơ đang chờ xét duyệt"
                 else:
                     session["apply_message"] = "✅ Hoàn thành bài test"
             else:
-                # có lỗi khi apply -> vẫn thông báo test ok nhưng kèm cảnh báo
                 try:
                     err = apply_res.json().get("detail") or apply_res.text
                 except:
@@ -680,12 +639,10 @@ def company_jobs():
     user_id = session['user']['id']
     content = "<h2>📄 Tin tuyển dụng của công ty</h2>"
     try:
-        # Lấy thông tin công ty
         comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
         if comp_res.status_code != 200:
             return wrap_layout("<h2>⚠️ Chưa có hồ sơ công ty</h2>")      
         company = comp_res.json()       
-        # [CẬP NHẬT] Gọi API lấy Job CỦA RIÊNG CÔNG TY để đảm bảo tính chính xác
         jobs_res = requests.get(f"{API_URL}/companies/{company['id']}/jobs")
         my_jobs = jobs_res.json() if jobs_res.status_code == 200 else []
     except Exception as e:
@@ -702,7 +659,6 @@ def company_jobs():
         <div class="job-card">
             <h3>{j['title']}</h3>
             <p style="white-space: pre-line; color:#555;">{j['description']}</p>
-            <!-- ⭐ HIỂN THỊ TỔNG SỐ ỨNG VIÊN -->
             <p><b>Ứng viên:</b> {j.get('appliedCount', 0)} / {j.get('maxApplicants', '∞')}</p>       
             <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
                 <a href="/company/jobs/{j['id']}/edit" style="margin-right:15px; color:#f59e0b; font-weight:bold; text-decoration:none;">
@@ -724,10 +680,8 @@ def company_create_job():
     message = ""
     if request.method == 'POST':
         try:
-            # 1. Lấy thông tin công ty
             comp_res = requests.get(f"{API_URL}/companies/user/{session['user']['id']}")
             company = comp_res.json()
-            # 2. Đóng gói payload cơ bản cho Job
             payload = {
                 "companyId": company['id'],
                 "title": request.form['title'],
@@ -736,19 +690,16 @@ def company_create_job():
                 "status": "open",
                 "maxApplicants": int(request.form.get("maxApplicants"))
             }
-            # 3. Xử lý bài Test nếu được tích chọn
             if request.form.get('has_test') == 'on':
                 q_contents = request.form.getlist('q_content[]')
-                q_options = request.form.getlist('q_options[]')
-                q_answers = request.form.getlist('q_answer[]')
+                # [CẬP NHẬT] Không lấy options và answers nữa vì là tự luận
                 questions = []
-                for c, o, a in zip(q_contents, q_options, q_answers):
+                for c in q_contents:
                     if c.strip():
-                        # Đóng gói từng câu hỏi theo đúng cấu trúc Backend mong đợi
                         questions.append({
                             "content": c,
-                            "options": o, 
-                            "correctAnswer": a
+                            "options": "", # Rỗng cho tự luận
+                            "correctAnswer": "" # Rỗng cho tự luận
                         })              
                 payload["test"] = {
                     "testName": request.form.get('testName', f"Test for {payload['title']}"),
@@ -756,7 +707,6 @@ def company_create_job():
                     "totalScore": int(request.form.get('totalScore') or 100),
                     "questions": questions
                 }
-            # 4. Gửi yêu cầu POST tới Backend
             res = requests.post(f"{API_URL}/jobs/", json=payload)      
             if res.status_code in [200, 201]:
                 return redirect('/company/jobs') 
@@ -783,7 +733,7 @@ def company_create_job():
         <div class="job-card" style="border-left: 6px solid #2563eb; background:#f8fafc;">
             <label style="display:flex; align-items:center; cursor:pointer; color:#2563eb;">
                 <input type="checkbox" name="has_test" id="chkTest" onclick="toggleTestForm()" style="width:auto; margin-right:10px;">
-                <b>Kèm bài kiểm tra năng lực?</b>
+                <b>Kèm bài kiểm tra năng lực (Tự luận)?</b>
             </label>
             <div id="test-form" style="display:none; margin-top:15px; border-top:1px solid #ddd; padding-top:10px;">
                 <label>Tên bài kiểm tra</label>
@@ -792,7 +742,7 @@ def company_create_job():
                     <div style="flex:1;"><label>Thời gian (phút)</label><input type="number" name="duration" value="30"></div>
                     <div style="flex:1;"><label>Tổng điểm</label><input type="number" name="totalScore" value="100"></div>
                 </div>
-                <label>Danh sách câu hỏi:</label>
+                <label>Danh sách câu hỏi (Tự luận):</label>
                 <div id="questions-container"></div>
                 <button type="button" onclick="addQuestion()" style="background:#475569; width:auto; padding:8px 15px; margin-top:10px;">+ Thêm câu hỏi</button>
             </div>
@@ -809,13 +759,15 @@ def company_create_job():
         function addQuestion() {{
             var div = document.createElement("div");
             div.style.marginBottom = "10px"; div.style.padding = "10px"; div.style.background = "white"; div.style.border = "1px solid #ddd";
-            div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:5px;">Câu hỏi mới</div><input name="q_content[]" placeholder="Nội dung..." required style="margin-bottom:5px;"><input name="q_options[]" placeholder="Đáp án..." required style="margin-bottom:5px;"><input name="q_answer[]" placeholder="Đáp án đúng..." required><button type="button" onclick="this.parentElement.remove()" style="background:#ef4444; width:auto; padding:4px 10px; font-size:12px; margin-top:5px;">Xóa</button>`;
+            // [CẬP NHẬT] Giao diện chỉ còn ô nhập nội dung câu hỏi
+            div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:5px;">Câu hỏi mới (Tự luận)</div>
+            <textarea name="q_content[]" placeholder="Nhập nội dung câu hỏi..." required style="margin-bottom:5px; width:100%;" rows="3"></textarea>
+            <button type="button" onclick="this.parentElement.remove()" style="background:#ef4444; width:auto; padding:4px 10px; font-size:12px; margin-top:5px;">Xóa</button>`;
             document.getElementById("questions-container").appendChild(div);
         }}
     </script>
     """)
 
-# [MỚI] HÀM CHỈNH SỬA JOB (THAY THẾ CHO CREATE TEST RIÊNG LẺ)
 @app.route('/company/jobs/<int:job_id>/edit', methods=['GET', 'POST'])
 def company_edit_job(job_id):
     if 'user' not in session or session['user']['role'] != 'company':
@@ -849,11 +801,10 @@ def company_edit_job(job_id):
             }
             if request.form.get('has_test') == 'on':
                 q_contents = request.form.getlist('q_content[]')
-                q_options = request.form.getlist('q_options[]')
-                q_answers = request.form.getlist('q_answer[]')
+                # [CẬP NHẬT] Bỏ options/answers
                 questions_list = []
-                for c, o, a in zip(q_contents, q_options, q_answers):
-                    if c.strip(): questions_list.append({"content": c, "options": o, "correctAnswer": a})
+                for c in q_contents:
+                    if c.strip(): questions_list.append({"content": c, "options": "", "correctAnswer": ""})
                 payload["test"] = {
                     "testName": request.form['testName'],
                     "duration": int(request.form['duration'] or 30),
@@ -883,7 +834,7 @@ def company_edit_job(job_id):
         </div>
         <div class="job-card" style="border-left: 6px solid #2563eb; background:#f0f9ff;">
             <label style="display:flex; align-items:center; cursor:pointer; color:#2563eb; margin-bottom:15px;">
-                <input type="checkbox" name="has_test" id="chkTest" onclick="toggleTestForm()" {has_test_checked} style="width:auto; margin-right:10px;"><b>Kèm bài kiểm tra năng lực?</b>
+                <input type="checkbox" name="has_test" id="chkTest" onclick="toggleTestForm()" {has_test_checked} style="width:auto; margin-right:10px;"><b>Kèm bài kiểm tra năng lực (Tự luận)?</b>
             </label>
             <div id="test-form" style="display:{display_test_form};">
                 <label>Tên bài kiểm tra</label><input name="testName" value="{current_test.get('testName', '') if current_test else ''}">
@@ -891,7 +842,7 @@ def company_edit_job(job_id):
                     <div style="flex:1;"><label>Thời gian</label><input type="number" name="duration" value="{current_test.get('duration', 30) if current_test else 30}"></div>
                     <div style="flex:1;"><label>Tổng điểm</label><input type="number" name="totalScore" value="{current_test.get('totalScore', 100) if current_test else 100}"></div>
                 </div>
-                <h4 style="margin-top:20px;">Danh sách câu hỏi:</h4>
+                <h4 style="margin-top:20px;">Danh sách câu hỏi (Tự luận):</h4>
                 <div id="questions-container"></div>
                 <button type="button" onclick="addQuestionInput()" style="background:#475569; margin-top:15px; width:auto; padding:8px 15px; font-size:13px;">+ Thêm câu hỏi</button>
             </div>
@@ -904,15 +855,18 @@ def company_edit_job(job_id):
             var chk = document.getElementById("chkTest");
             document.getElementById("test-form").style.display = chk.checked ? "block" : "none";
         }}
-        function addQuestionInput(content='', options='', answer='') {{
+        function addQuestionInput(content='') {{
             var container = document.getElementById("questions-container");
             var div = document.createElement("div");
             div.style.marginBottom = "15px"; div.style.padding = "15px"; div.style.background = "white"; div.style.border = "1px solid #cbd5e1";
-            div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:8px;">Câu hỏi</div><input name="q_content[]" placeholder="Nội dung..." required value="${{content}}" style="margin-bottom:8px;"><div style="display:flex; gap:10px;"><div style="flex:2;"><input name="q_options[]" placeholder="Đáp án..." required value="${{options}}"></div><div style="flex:1;"><input name="q_answer[]" placeholder="Đáp án đúng..." required value="${{answer}}"></div></div><button type="button" onclick="this.parentElement.remove()" style="background:#ef4444; width:auto; padding:4px 10px; font-size:11px; margin-top:5px;">Xóa</button>`;
+            // [CẬP NHẬT] Giao diện edit chỉ còn textarea nội dung
+            div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:8px;">Câu hỏi (Tự luận)</div>
+            <textarea name="q_content[]" placeholder="Nội dung câu hỏi..." required style="margin-bottom:8px; width:100%;" rows="3">${{content}}</textarea>
+            <button type="button" onclick="this.parentElement.remove()" style="background:#ef4444; width:auto; padding:4px 10px; font-size:11px; margin-top:5px;">Xóa</button>`;
             container.appendChild(div);
         }}
         window.onload = function() {{
-            if (existingQuestions.length > 0) {{ existingQuestions.forEach(q => {{ addQuestionInput(q.content.replace(/"/g, '&quot;'), q.options.replace(/"/g, '&quot;'), q.correctAnswer); }}); }}
+            if (existingQuestions.length > 0) {{ existingQuestions.forEach(q => {{ addQuestionInput(q.content.replace(/"/g, '&quot;')); }}); }}
             else if (document.getElementById("chkTest").checked) {{ addQuestionInput(); }}
         }};
     </script>
@@ -956,7 +910,11 @@ def company_evaluate_application(app_id):
             "skillScore": int(request.form.get('skillScore', 0)),
             "peerReview": request.form.get('peerReview'),
             "improvement": request.form.get('improvement'),
-            "nextStatus": action
+            "nextStatus": action,
+            # [CẬP NHẬT] Gửi thêm thông tin phỏng vấn
+            "interviewTime": request.form.get('interviewTime'),
+            "interviewLocation": request.form.get('interviewLocation'),
+            "interviewNote": request.form.get('interviewNote')
         }
         try:
             res = requests.post(f"{API_URL}/applications/{app_id}/evaluate", json=payload)
@@ -971,11 +929,30 @@ def company_evaluate_application(app_id):
     <div class="job-card" style="border-left:6px solid #8b5cf6;">
         <h3>Hồ sơ #{app_id}</h3>
         <form method="post">
-            <label>Điểm kỹ năng</label><input type="number" name="skillScore">
-            <label>Nhận xét</label><textarea name="peerReview"></textarea>
-            <label>Cải thiện</label><textarea name="improvement"></textarea>
-            <div style="margin-top:20px; display:flex; gap:10px;">
-                <button name="action" value="interview" style="background:#2563eb;">📅 Duyệt / Phỏng vấn</button>
+            <div style="margin-bottom:20px;">
+                <label>Điểm kỹ năng</label><input type="number" name="skillScore">
+                <label>Nhận xét chung</label><textarea name="peerReview"></textarea>
+                <label>Cải thiện</label><textarea name="improvement"></textarea>
+            </div>
+            
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; padding:15px; border-radius:6px; margin-bottom:20px;">
+                <h4 style="margin-top:0; color:#166534;">📅 Thông tin phỏng vấn (Nếu chọn Duyệt)</h4>
+                <div style="display:flex; gap:15px;">
+                    <div style="flex:1;">
+                        <label>Thời gian</label>
+                        <input type="datetime-local" name="interviewTime">
+                    </div>
+                    <div style="flex:2;">
+                        <label>Địa điểm / Link Online</label>
+                        <input type="text" name="interviewLocation" placeholder="VD: Phòng 202 hoặc Google Meet link...">
+                    </div>
+                </div>
+                <label>Ghi chú cho ứng viên</label>
+                <input type="text" name="interviewNote" placeholder="VD: Mang theo laptop...">
+            </div>
+
+            <div style="display:flex; gap:10px;">
+                <button name="action" value="interview" style="background:#2563eb;">📅 Duyệt & Gửi mời PV</button>
                 <button name="action" value="rejected" style="background:#ef4444;">❌ Từ chối</button>
             </div>
         </form>
