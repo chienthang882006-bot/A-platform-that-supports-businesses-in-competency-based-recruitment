@@ -30,3 +30,13 @@ scr/                                # Thư mục gốc chứa mã nguồn của 
 │   └── RecruitmentApp.db           # Cơ sở dữ liệu SQLite hiện tại
 ├── .gitignore                      # Quản lý Git
 └── requirements.txt                # Danh sách thư viện cài đặt
+
+
+
+# Download source code (CMD)
+git clone https://github.com/chienthang882006-bot/A-platform-that-supports-businesses-in-competency-based-recruitment.git
+
+# Kiểm tra đã cài python đã cài đặt trên máy chưa
+python --version
+
+# Run 
