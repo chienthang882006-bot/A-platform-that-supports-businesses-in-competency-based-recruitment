@@ -1,10 +1,18 @@
 # FILE: seed_data.py
-from database import SessionLocal
+from database import db_session, init_db
 from models import User, Student, StudentProfile, UserRole, Job, Company
 from datetime import datetime
 
-# 1. Khởi tạo session
-db = SessionLocal()
+# ==============================
+# 0. KHỞI TẠO DATABASE (TẠO BẢNG)
+# ==============================
+init_db()
+
+# ==============================
+# 1. DÙNG SESSION DÙNG CHUNG
+# ==============================
+db = db_session
+
 
 try:
     print("--- 🛠 ĐANG KHÔI PHỤC DỮ LIỆU ---")
@@ -47,7 +55,25 @@ try:
         db.add(my_profile)
         db.commit()
         print(f"✅ Đã tạo tài khoản: {my_email} / Pass: 123")
+    # ==========================================
+    # 1.5. TẠO TÀI KHOẢN ADMIN (QUẢN TRỊ HỆ THỐNG)
+    # ==========================================
+    admin_email = "admin@labodc.com"
 
+    if not db.query(User).filter(User.email == admin_email).first():
+        admin_user = User(
+            email=admin_email,
+            password="admin123",   # mật khẩu demo
+            role=UserRole.ADMIN,   # ⚠️ QUAN TRỌNG
+            status="active"
+        )
+        db.add(admin_user)
+        db.commit()
+        db.refresh(admin_user)
+
+        print("✅ Đã tạo tài khoản ADMIN:")
+        print("   Email: admin@labodc.com")
+        print("   Password: admin123")
     # ==========================================
     # 2. TẠO DỮ LIỆU MẪU (CÔNG TY & JOB)
     # ==========================================
@@ -90,3 +116,4 @@ except Exception as e:
 finally:
     db.close()
     print("--- HOÀN TẤT ---")
+    
