@@ -75,19 +75,21 @@ scr/                                # Thư mục gốc chứa mã nguồn của 
 ```
 ## Create file .env in folder /src/.env
 
-### Flask settings
+```env
+# Flask settings
+FLASK_ENV=development
+SECRET_KEY=your_secret_key
 
-FLASK_ENV=development SECRET_KEY=your_secret_key
+# SQL Server settings
+DB_USER=sa
+DB_PASSWORD=Aa@123456
+DB_HOST=127.0.0.1
+DB_PORT=1433
+DB_NAME=FlaskApiDB
 
-### SQL Server settings
+DATABASE_URI="mssql+pymssql://sa:Aa%40123456@127.0.0.1:1433/FlaskApiDB"
+```
 
-DB_USER=sa DB_PASSWORD=Aa@123456 DB_HOST=127.0.0.1 DB_PORT=1433 DB_NAME=RecruitmentDB
-
-DATABASE_URI="mssql+pymssql://sa:Aa2123456@127.0.0.1:1433/RecruitmentDB"
-
-### Pull image MS SQL Server
-
-docker pull mcr.microsoft.com/mssql/server:2025-latest
 ## Pull image MS SQL Server
 ```bash
 docker pull mcr.microsoft.com/mssql/server:2025-latest
