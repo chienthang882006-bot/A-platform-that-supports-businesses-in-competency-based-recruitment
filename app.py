@@ -894,16 +894,69 @@ def company_applications():
         apps = []
 
     content = "<h2>📥 Danh sách hồ sơ ứng tuyển</h2>"
+
     if not apps:
         content += "<p style='color:#666;'>Chưa có hồ sơ nào.</p>"
     else:
-        content += """<table style="width:100%; border-collapse:collapse; background:white; margin-top:20px;">
-            <thead style="background:#f1f5f9; border-bottom:2px solid #e2e8f0;"><tr><th style="padding:15px; text-align:left;">Ứng viên</th><th style="padding:15px; text-align:left;">Vị trí</th><th style="padding:15px;">Điểm</th><th style="padding:15px;">Trạng thái</th><th style="padding:15px; text-align:right;">Hành động</th></tr></thead><tbody>"""
+        content += """
+        <table style="width:100%; border-collapse:collapse; background:white; margin-top:20px;">
+            <thead style="background:#f1f5f9; border-bottom:2px solid #e2e8f0;">
+                <tr>
+                    <th style="padding:15px; text-align:left;">Ứng viên</th>
+                    <th style="padding:15px; text-align:left;">Vị trí</th>
+                    <th style="padding:15px;">Điểm</th>
+                    <th style="padding:15px;">Trạng thái</th>
+                    <th style="padding:15px; text-align:right;">Hành động</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+
         for a in apps:
             score_display = f"<b>{a['testScore']}</b>" if a['testScore'] != "N/A" else "--"
-            content += f"""<tr style="border-bottom:1px solid #eee;"><td style="padding:15px;"><b>{a['studentName']}</b></td><td style="padding:15px;">{a['jobTitle']}</td><td style="padding:15px;">{score_display}</td><td style="padding:15px;">{a['status']}</td><td style="padding:15px; text-align:right;"><a href="{a['cvUrl']}" target="_blank" style="margin-right:10px;">CV</a><a href="/company/applications/{a['applicationId']}/evaluate" style="background:#0f172a; color:white; padding:5px 10px; border-radius:4px; text-decoration:none;">Đánh giá</a></td></tr>"""
+
+            content += f"""
+            <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:15px;">
+                    <b>{a['studentName']}</b>
+                </td>
+                <td style="padding:15px;">
+                    {a['jobTitle']}
+                </td>
+                <td style="padding:15px; text-align:center;">
+                    {score_display}
+                </td>
+                <td style="padding:15px; text-align:center;">
+                    {a['status']}
+                </td>
+                <td style="padding:15px; text-align:right;">
+                    <!-- ✅ NÚT XEM CV ĐÃ SỬA -->
+                    <a href="/company/applications/{a['applicationId']}/cv"
+                       style="margin-right:10px;
+                              background:#2563eb;
+                              color:white;
+                              padding:6px 10px;
+                              border-radius:4px;
+                              text-decoration:none;">
+                        📄 Xem CV
+                    </a>
+
+                    <a href="/company/applications/{a['applicationId']}/evaluate"
+                       style="background:#0f172a;
+                              color:white;
+                              padding:6px 10px;
+                              border-radius:4px;
+                              text-decoration:none;">
+                        📝 Đánh giá
+                    </a>
+                </td>
+            </tr>
+            """
+
         content += "</tbody></table>"
+
     return wrap_layout(content)
+
 
 @app.route('/company/applications/<int:app_id>/evaluate', methods=['GET', 'POST'])
 def company_evaluate_application(app_id):
@@ -911,23 +964,42 @@ def company_evaluate_application(app_id):
         return redirect('/login')
 
     message = ""
+
     if request.method == 'POST':
         action = request.form.get('action')
+
+        # ===== FIX LỖI int("") =====
+        skill_score_raw = request.form.get('skillScore')
+        try:
+            skill_score = int(skill_score_raw) if skill_score_raw else None
+        except ValueError:
+            skill_score = None
+
         payload = {
-            "skillScore": int(request.form.get('skillScore', 0)),
+            "skillScore": skill_score,
             "peerReview": request.form.get('peerReview'),
             "improvement": request.form.get('improvement'),
             "nextStatus": action,
-            # [CẬP NHẬT] Gửi thêm thông tin phỏng vấn
             "interviewTime": request.form.get('interviewTime'),
             "interviewLocation": request.form.get('interviewLocation'),
             "interviewNote": request.form.get('interviewNote')
         }
+
         try:
-            res = requests.post(f"{API_URL}/applications/{app_id}/evaluate", json=payload)
-            if res.status_code in [200, 201]: return redirect('/company/applications')
-            else: message = "❌ Lỗi khi cập nhật đánh giá"
-        except: message = "❌ Lỗi kết nối server"
+            res = requests.post(
+                f"{API_URL}/applications/{app_id}/evaluate",
+                json=payload,
+                timeout=5
+            )
+
+            if res.status_code in (200, 201):
+                return redirect('/company/applications')
+            else:
+                message = "❌ Lỗi khi cập nhật đánh giá"
+
+        except Exception as e:
+            print("Evaluate error:", e)
+            message = "❌ Lỗi kết nối server"
 
     return wrap_layout(f"""
     <h2>⚖️ Đánh giá & Phỏng vấn</h2>
@@ -975,6 +1047,38 @@ def company_view_applicants(job_id):
     for a in apps:
         content += f"""<div class="job-card"><b>{a['studentName']}</b><br>Trạng thái: {a['status']}<br><a href="{a['cvUrl']}" target="_blank">📄 Xem CV</a></div>"""
     return wrap_layout(content)
+
+
+@app.route("/company/applications/<int:app_id>/cv")
+def company_view_cv(app_id):
+    if 'user' not in session or session['user']['role'] != 'company':
+        return redirect('/login')
+
+    res = requests.get(f"{API_URL}/companies/applications/{app_id}/cv")
+
+    if res.status_code != 200:
+        return wrap_layout("<h3>❌ Không thể xem CV</h3>")
+
+    data = res.json()
+
+    content = f"""
+    <h2>📄 CV Ứng viên</h2>
+
+    <div class="job-card">
+        <p><b>👤 Họ tên:</b> {data['studentName']}</p>
+        <p><b>🎓 Ngành:</b> {data['major']}</p>
+        <p><b>💼 Vị trí ứng tuyển:</b> {data['jobTitle']}</p>
+
+        <a href="{data['cvUrl']}" target="_blank">
+            <button style="margin-top:15px; background:#16a34a;">
+                📄 Mở CV (PDF / Drive)
+            </button>
+        </a>
+    </div>
+    """
+
+    return wrap_layout(content)
+
 
 # ADMIN ROUTERS
 

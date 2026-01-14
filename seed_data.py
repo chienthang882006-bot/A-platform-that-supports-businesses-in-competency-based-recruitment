@@ -1,10 +1,11 @@
 # FILE: seed_data.py
-from database import SessionLocal
+from database import db_session, init_db
 from models import User, Student, StudentProfile, UserRole, Job, Company
 from datetime import datetime
 
+init_db()
 # 1. Khởi tạo session
-db = SessionLocal()
+db = db_session()
 
 try:
     print("--- 🛠 ĐANG KHÔI PHỤC DỮ LIỆU ---")

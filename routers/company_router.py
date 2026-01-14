@@ -47,6 +47,75 @@ def get_company_by_user(user_id):
         "companyName": company.companyName
     })
 
+# =========================
+# GET COMPANY PROFILE BY USER
+# =========================
+@company_bp.route("/companies/user/<int:user_id>/profile", methods=["GET"])
+def get_company_profile(user_id):
+    company = db_session.query(Company).filter(
+        Company.userId == user_id
+    ).first()
+
+    if not company:
+        return jsonify({"detail": "Company not found"}), 404
+
+    return jsonify({
+        "id": company.id,
+        "companyName": company.companyName,
+        "description": company.description,
+        "website": company.website,
+        "address": getattr(company, "address", None),
+        "industry": getattr(company, "industry", None),
+        "size": getattr(company, "size", None),
+        "logoUrl": getattr(company, "logoUrl", None)
+    })
+
+
+# =========================
+# UPDATE COMPANY PROFILE
+# =========================
+@company_bp.route("/companies/<int:company_id>/profile", methods=["PUT"])
+def update_company_profile(company_id):
+    data = request.json
+
+    company = db_session.query(Company).filter(
+        Company.id == company_id
+    ).first()
+
+    if not company:
+        return jsonify({"detail": "Company not found"}), 404
+
+    try:
+        if "companyName" in data:
+            company.companyName = data["companyName"]
+
+        if "description" in data:
+            company.description = data["description"]
+
+        if "website" in data:
+            company.website = data["website"]
+
+        if "address" in data:
+            company.address = data["address"]
+
+        if "industry" in data:
+            company.industry = data["industry"]
+
+        if "size" in data:
+            company.size = data["size"]
+
+        if "logoUrl" in data:
+            company.logoUrl = data["logoUrl"]
+
+        db_session.commit()
+        return jsonify({"message": "Cập nhật hồ sơ công ty thành công"})
+
+    except Exception as e:
+        db_session.rollback()
+        print("Update company profile error:", e)
+        return jsonify({
+            "detail": f"Lỗi cập nhật hồ sơ công ty: {str(e)}"
+        }), 500
 
 # =========================
 # CREATE JOB & TEST
@@ -310,7 +379,7 @@ def update_job(job_id):
         if "status" in data: job.status = data["status"]
         if "maxApplicants" in data:job.maxApplicants = data["maxApplicants"]
         # 2. Cập nhật bài Test
-        if "test" in data:
+        if "test" in data and data["test"]:
             test_data = data["test"]           
             skill_test = db_session.query(SkillTest).filter(SkillTest.jobId == job.id).first()
             if not skill_test:
@@ -365,3 +434,28 @@ def get_applications_by_job(job_id):
             "cvUrl": cv_url,
         })
     return jsonify(response)
+
+# =========================
+# XEM CV ỨNG VIÊN (COMPANY)
+# =========================
+@company_bp.route("/companies/applications/<int:app_id>/cv", methods=["GET"])
+def company_view_candidate_cv(app_id):
+    app = db_session.query(Application).filter(
+        Application.id == app_id
+    ).first()
+
+    if not app:
+        return jsonify({"detail": "Application not found"}), 404
+
+    student = app.student
+    if not student or not student.profile or not student.profile.cvUrl:
+        return jsonify({"detail": "Ứng viên chưa có CV"}), 404
+
+    return jsonify({
+        "applicationId": app.id,
+        "studentId": student.id,
+        "studentName": student.fullName,
+        "major": student.major,
+        "jobTitle": app.job.title,
+        "cvUrl": student.profile.cvUrl
+    })
