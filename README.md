@@ -68,53 +68,24 @@ scr/                                # Thư mục gốc chứa mã nguồn của 
   ```
     pip install -r requirements.txt
   ```
- * Bước 4: Chạy mã xử lý dữ liệu
- ### Run
+ * Bước 4: Cấu hình biến môi trường (.env)
  ```
- python app.py
+    # Flask settings
+    FLASK_ENV=development
+    SECRET_KEY=your_secret_key_change_me
+    
+    # Database settings (SQLite)
+    DATABASE_URI="sqlite:///RecruitmentApp.db"
+  ```
+ * Bước 5: Chạy ứng dụng
+   ### Run:
 ```
-## Create file .env in folder /src/.env
-
-```env
-# Flask settings
-FLASK_ENV=development
-SECRET_KEY=your_secret_key
-
-# SQL Server settings
-DB_USER=sa
-DB_PASSWORD=Aa@123456
-DB_HOST=127.0.0.1
-DB_PORT=1433
-DB_NAME=FlaskApiDB
-
-DATABASE_URI="mssql+pymssql://sa:Aa%40123456@127.0.0.1:1433/FlaskApiDB"
+    python app.py
 ```
-
-## Pull image MS SQL Server
-```bash
-docker pull mcr.microsoft.com/mssql/server:2025-latest
-```
-## Install MS SQL server in docker (Cài đặt MS SQL Server bằng Docker)
-```bash
-docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=Aa@123456" -p 1433:1433 --name recruitment_sql -d mcr.microsoft.com/mssql/server:2025-latest
-```
-## Test connect SQL server
-```bash
-docker ps
-```
-- Kiểm tra kết nối từ Flask thông qua DATABASE-URI
-- Nếu kết nối thành công -> hệ thống sẵn sàng hoạt động
-
-## ORM Flask (from sqlalchemy.orm )
-
-Object Relational Mapping
-
-Ánh xạ 1 class (OOP) trong src/infrastructure/models
--> 1 bảng trong cơ sở dữ liệu
--> Ánh xạ các mối quan hệ (Relational)
--> Khoá ngoại CSDL
-
-Các quan hệ chính trong hệ thống tuyển dụng:
+## 🗄️ Database & ORM (SQLAlchemy)
+Hệ thống sử dụng SQLAlchemy (ORM) để ánh xạ đối tượng (OOP) vào cơ sở dữ liệu.
+Ánh xạ: 1 Class (trong models/) ↔ 1 Bảng (Database).
+Quan hệ chính:
 
 Candidate - Skill (n-n)
 
@@ -123,39 +94,31 @@ JobPosition - Skill (n-n)
 Candidate - Assessment (1-n)
 
 Candidate - InterviewResult (1-n)
+## 📊 Sequence Diagram (Luồng xử lý)
+Mô tả quy trình xử lý một Request theo Clean Architecture:
+```
+sequenceDiagram
+    participant Actor
+    participant WebApp as Web App (Flask)
+    participant Controller as Router/Controller
+    participant Services as Service Layer
+    participant Domain as Domain Layer
+    participant Infra as Infrastructure/Repo
+    participant DB as SQLite Database
 
-### Clean Architecture Sequence Diagram
-@startuml title Recruitment System Clean Architecture Sequence Diagram
+    Note over WebApp, DB: Request Flow
+    Actor->>WebApp: 1. Request recruitment processing
+    WebApp->>Controller: 2. Forward to Router
+    Controller->>Services: 3. Call Service logic
+    Services->>Domain: 4. Apply Business Rules
+    Domain->>Infra: 5. Request Data Access
+    Infra->>DB: 6. Execute Query (ORM)
 
-' Define participants in oder of appearance actor Actor participant "Web App" participant "Controller" participant "Services" participant "Domain" participant "Infrastructure" participant "Database"
-
-'--- Message Flow ---
-
-'1. Initial Request Actor -> "Web App" : Request recruitment processing activate "Web App"
-
-'2. Forwarding to Controller "Web App" -> "Controller" activate "Controller"
-
-'3. Calling the Service Layer "Controller" -> "Services" activate "Services"
-
-'4. Interacting with the Domain Layer "Services" -> "Domain" activate "Domain" note over "Domain" : Recruitment business rules\nCompetency evaluation logic
-
-'5. Interacting with Infrastructure "Domain" -> "Infrastructure" activate "Infrastructure" note over "Infrastructure" : ORM models\nRepository implementation
-
-'6. Database Query "Infrastructure" -> "Database" activate "Database"
-
-' --- Response Flow (Return Messages) ---
-
-'7. Database returns data "Database" --> "Infrastructure" deactivate "Database"
-
-'8. Infrastructure returns to Domain "Infrastructure" --> "Domain" deactivate "Infrastructure"
-
-'9. Domain returns to Services "Domain" --> "Services" deactivate "Domain"
-
-'10. Services returns to Controller "Services" --> "Controller" deactivate "Services"
-
-'11. Controller returns to Web App "Controller" --> "Web App" deactivate "Controller"
-
-'12. Final data rendering to Actor "Web App" --> Actor note left of "Web App" : Render recruitment result  
-deactivate "Web App"
-
-@enduml
+    Note over DB, WebApp: Response Flow
+    DB-->>Infra: 7. Return Raw Data
+    Infra-->>Domain: 8. Return Models
+    Domain-->>Services: 9. Return Processed Data
+    Services-->>Controller: 10. Return DTO/Schema
+    Controller-->>WebApp: 11. JSON Response
+    WebApp-->>Actor: 12. Render Result
+```
