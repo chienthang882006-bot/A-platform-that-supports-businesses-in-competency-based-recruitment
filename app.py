@@ -1143,13 +1143,17 @@ def company_applications():
     return wrap_layout(content)
 
 
+# Trong file app.py
+
 @app.route('/company/applications/<int:app_id>/evaluate', methods=['GET', 'POST'])
 def company_evaluate_application(app_id):
+    # 1. Kiểm tra quyền truy cập
     if 'user' not in session or session['user']['role'] != 'company':
         return redirect('/login')
 
     message = ""
 
+    # 2. XỬ LÝ POST: Khi bấm nút Lưu/Duyệt
     if request.method == 'POST':
         action = request.form.get('action')
         skill_score_raw = request.form.get('skillScore')
@@ -1184,17 +1188,71 @@ def company_evaluate_application(app_id):
             print("Evaluate error:", e)
             message = "❌ Lỗi kết nối server"
 
+    # 3. XỬ LÝ GET: Lấy chi tiết bài làm & hiển thị giao diện
+    test_html = ""
+    try:
+        # Gọi API lấy chi tiết bài test (Code bạn vừa thêm ở company_router)
+        res = requests.get(f"{API_URL}/applications/{app_id}/test-detail")
+        
+        if res.status_code == 200:
+            data = res.json()
+            
+            # Trường hợp 1: Có bài test và đã nộp bài -> Hiển thị câu hỏi & trả lời
+            if data.get("hasTest") and data.get("submitted"):
+                rows = ""
+                for idx, item in enumerate(data['details'], 1):
+                    # Xử lý xuống dòng cho câu trả lời dễ đọc
+                    answer_text = item['answer'].replace("\n", "<br>")
+                    rows += f"""
+                    <div style="margin-bottom:15px; background:#f8fafc; padding:15px; border-radius:8px; border:1px solid #e2e8f0;">
+                        <div style="font-weight:bold; color:#1e293b; margin-bottom:8px;">
+                            <span style="background:#2563eb; color:white; padding:2px 8px; border-radius:4px; font-size:12px; margin-right:5px;">Câu {idx}</span> 
+                            {item['question']}
+                        </div>
+                        <div style="background:white; padding:12px; border:1px solid #cbd5e1; border-radius:4px; color:#334155; line-height:1.5;">
+                            {answer_text}
+                        </div>
+                    </div>
+                    """
+                test_html = f"""
+                <div class="job-card" style="border-left:6px solid #f59e0b; margin-bottom:20px;">
+                    <h3 style="margin-top:0; color:#b45309;">📝 Bài làm của ứng viên</h3>
+                    <p>Điểm hệ thống chấm: <b>{data.get('score', 0)}</b></p>
+                    {rows}
+                </div>
+                """
+            
+            # Trường hợp 2: Có bài test nhưng chưa nộp (Lỗi hoặc đang làm dở)
+            elif data.get("hasTest") and not data.get("submitted"):
+                test_html = """
+                <div class="job-card" style="border-left:6px solid #ef4444; background:#fef2f2; color:#b91c1c;">
+                    ⚠️ Ứng viên chưa nộp bài test hoặc bài làm bị lỗi.
+                </div>
+                """
+                
+    except Exception as e:
+        test_html = f""
+
+    # 4. TRẢ VỀ GIAO DIỆN HTML
     return wrap_layout(f"""
     <h2>⚖️ Đánh giá & Phỏng vấn</h2>
     <p><a href="/company/applications">← Quay lại danh sách</a></p>
-    <p style="color:red">{message}</p>
+    <p style="color:red; font-weight:bold;">{message}</p>
+    
+    {test_html}
+
     <div class="job-card" style="border-left:6px solid #8b5cf6;">
-        <h3>Hồ sơ #{app_id}</h3>
+        <h3>Hồ sơ #{app_id} - Đánh giá chuyên môn</h3>
         <form method="post">
             <div style="margin-bottom:20px;">
-                <label>Điểm kỹ năng</label><input type="number" name="skillScore">
-                <label>Nhận xét chung</label><textarea name="peerReview"></textarea>
-                <label>Cải thiện</label><textarea name="improvement"></textarea>
+                <label>Điểm kỹ năng (Đánh giá của bạn)</label>
+                <input type="number" name="skillScore" placeholder="Nhập điểm...">
+                
+                <label>Nhận xét chung</label>
+                <textarea name="peerReview" rows="3" placeholder="Nhận xét về năng lực ứng viên..."></textarea>
+                
+                <label>Cải thiện</label>
+                <textarea name="improvement" rows="2" placeholder="Những điểm cần cải thiện..."></textarea>
             </div>
             
             <div style="background:#f0fdf4; border:1px solid #bbf7d0; padding:15px; border-radius:6px; margin-bottom:20px;">
@@ -1206,16 +1264,16 @@ def company_evaluate_application(app_id):
                     </div>
                     <div style="flex:2;">
                         <label>Địa điểm / Link Online</label>
-                        <input type="text" name="interviewLocation" placeholder="VD: Phòng 202 hoặc Google Meet link...">
+                        <input type="text" name="interviewLocation" placeholder="VD: Phòng họp 1 / Google Meet...">
                     </div>
                 </div>
                 <label>Ghi chú cho ứng viên</label>
-                <input type="text" name="interviewNote" placeholder="VD: Mang theo laptop...">
+                <input type="text" name="interviewNote" placeholder="VD: Mang theo Laptop, ăn mặc lịch sự...">
             </div>
 
             <div style="display:flex; gap:10px;">
                 <button name="action" value="interview" style="background:#2563eb;">📅 Duyệt & Gửi mời PV</button>
-                <button name="action" value="rejected" style="background:#ef4444;">❌ Từ chối</button>
+                <button name="action" value="rejected" style="background:#ef4444;">❌ Từ chối hồ sơ</button>
             </div>
         </form>
     </div>

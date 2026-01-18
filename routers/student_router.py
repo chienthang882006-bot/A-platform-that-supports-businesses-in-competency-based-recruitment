@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from database import db_session
 from datetime import datetime
-
+import json
 # Import đầy đủ các models cần thiết
 from models.user_models import Student, StudentProfile
 from models.app_models import Application, TestResult, ApplicationStatus
@@ -34,6 +34,78 @@ def get_student_by_user(user_id):
             "degrees": student.profile.degrees if student.profile else None
         } if student.profile else None
     })
+# =========================
+# API: BẮT ĐẦU BÀI TEST (Sửa lỗi Not Found hiện tại)
+# =========================
+@student_bp.route("/tests/start", methods=["POST"])
+def start_test_session():
+    data = request.json
+    student_id = data.get("studentId")
+    job_id = data.get("jobId")
+
+    # 1. Kiểm tra bài test có tồn tại không
+    test = db_session.query(SkillTest).filter(SkillTest.jobId == job_id).first()
+    if not test:
+        return jsonify({"detail": "Job does not have a test"}), 404
+
+    # 2. Kiểm tra xem đã có hồ sơ ứng tuyển chưa
+    app = db_session.query(Application).filter(
+        Application.studentId == student_id, 
+        Application.jobId == job_id
+    ).first()
+
+    if not app:
+        # Nếu chưa có (lần đầu vào làm bài), tạo hồ sơ với trạng thái TESTING
+        new_app = Application(
+            studentId=student_id,
+            jobId=job_id,
+            status=ApplicationStatus.TESTING 
+        )
+        db_session.add(new_app)
+        db_session.commit()
+    
+    # 3. Trả về testId để App.py điều hướng
+    return jsonify({"testId": test.id, "message": "Ready to test"}), 200
+
+
+# =========================
+# API: XỬ LÝ ỨNG TUYỂN (Sửa lỗi nút "Ứng tuyển" nếu bạn gặp sau này)
+# =========================
+@student_bp.route("/apply/", methods=["POST"])
+def apply_job():
+    data = request.json
+    student_id = data.get("studentId")
+    job_id = data.get("jobId")
+
+    # 1. Kiểm tra xem đã ứng tuyển chưa
+    exists = db_session.query(Application).filter(
+        Application.studentId == student_id,
+        Application.jobId == job_id
+    ).first()
+
+    if exists:
+        return jsonify({"status": "ALREADY_APPLIED", "message": "Đã ứng tuyển rồi"}), 201
+
+    # 2. Kiểm tra xem Job này có yêu cầu Test không?
+    test = db_session.query(SkillTest).filter(SkillTest.jobId == job_id).first()
+    
+    if test:
+        # Nếu có test -> Trả về status NEED_TEST để App.py chuyển hướng sang trang làm bài
+        return jsonify({
+            "status": "NEED_TEST", 
+            "testId": test.id,
+            "message": "Cần làm bài test"
+        }), 201
+    else:
+        # Nếu KHÔNG có test -> Tạo Application luôn (status PENDING)
+        new_app = Application(
+            studentId=student_id,
+            jobId=job_id,
+            status=ApplicationStatus.PENDING 
+        )
+        db_session.add(new_app)
+        db_session.commit()
+        return jsonify({"status": "APPLIED", "message": "Ứng tuyển thành công"}), 201
 
 
 # =========================
@@ -124,7 +196,8 @@ def submit_test(test_id):
     tr = TestResult(
         testId=test_id,
         studentId=student_id,
-        score=data.get("score", 0)
+        score=data.get("score", 0),
+        answers=json.dumps(data.get("answers", [])) # Lưu câu trả lời vào DB
     )
     db_session.add(tr)
     

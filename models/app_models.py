@@ -52,6 +52,10 @@ class Interview(Base):
     interviewDate = Column(DateTime)
     interviewType = Column(String) # Online/Offline/Technical...
     status = Column(String) # Scheduled, Completed, Cancelled
+    interviewDate = Column(DateTime)      # Thời gian phỏng vấn
+    location = Column(String)             # Địa điểm / Link Meeting (Mới thêm)
+    note = Column(Text)                   # Ghi chú (Mới thêm)
+    status = Column(String, default="Scheduled")
 
     application = relationship("Application", back_populates="interviews")
     feedbacks = relationship("InterviewFeedback", back_populates="interview")
@@ -93,7 +97,8 @@ class TestResult(Base):
     # Lưu ý: bảng skill_tests được định nghĩa bên job_models.py
     testId = Column(Integer, ForeignKey('skill_tests.id')) 
     studentId = Column(Integer, ForeignKey('students.id'))
-    score = Column(Integer)
+    score = Column(Integer, default=0)
+    answers = Column(Text, nullable=True)  # Lưu trữ câu trả lời dưới dạng JSON chuỗi
     submittedAt = Column(DateTime, default=datetime.utcnow)
 
     # Quan hệ: String referenece giúp tránh circular import

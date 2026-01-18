@@ -1,10 +1,11 @@
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from database import db_session
 # Import models chính xác từ các file tương ứng
 from models.job_models import Job, SkillTest, Question
 from models.user_models import Company, Student, CompanyProfile
 from models.app_models import Application, ApplicationStatus, Evaluation, TestResult, Interview, Notification
-
+import json
 company_bp = Blueprint("company_router", __name__)
 
 def safe_int(value, default=0):
@@ -196,6 +197,39 @@ def create_job():
 
 
 # =========================
+# GET ALL OPEN JOBS (Dành cho trang Student Home)
+# =========================
+@company_bp.route("/jobs/", methods=["GET"])
+def get_all_open_jobs():
+    # 1. Lấy tất cả job có trạng thái 'open'
+    jobs = db_session.query(Job).filter(Job.status == "open").order_by(Job.createdAt.desc()).all()
+    
+    response = []
+    for job in jobs:
+        # 2. Kiểm tra xem job này có bài test không
+        has_test = False
+        test_id = None
+        
+        # job.skill_tests là một list do quan hệ 1-n
+        if job.skill_tests and len(job.skill_tests) > 0:
+            has_test = True
+            test_id = job.skill_tests[0].id
+            
+        response.append({
+            "id": job.id,
+            "title": job.title,
+            "description": job.description,
+            "location": job.location,
+            "status": job.status,
+            "companyId": job.companyId,
+            "maxApplicants": job.maxApplicants,
+            # Hai trường quan trọng để app.py hiển thị nút "Làm bài test" hay "Ứng tuyển"
+            "hasTest": has_test,
+            "testId": test_id
+        })
+        
+    return jsonify(response)
+# =========================
 # CREATE SKILL TEST FOR JOB
 # =========================
 @company_bp.route("/jobs/<int:job_id>/test", methods=["POST"])
@@ -231,7 +265,60 @@ def create_skill_test(job_id):
     except Exception as e:
         db_session.rollback()
         return jsonify({"detail": f"Lỗi tạo bài test: {str(e)}"}), 500
+# =========================
+# API MỚI: LẤY CHI TIẾT BÀI LÀM CỦA ỨNG VIÊN (Kèm câu hỏi & trả lời)
+# =========================
+@company_bp.route("/applications/<int:app_id>/test-detail", methods=["GET"])
+def get_application_test_detail(app_id):
+    # 1. Tìm Application
+    app = db_session.query(Application).filter(Application.id == app_id).first()
+    if not app: return jsonify({"detail": "App not found"}), 404
 
+    job = app.job
+    student = app.student
+    
+    # 2. Kiểm tra Job có bài test không
+    test = db_session.query(SkillTest).filter(SkillTest.jobId == job.id).first()
+    if not test:
+        return jsonify({"hasTest": False})
+
+    # 3. Tìm kết quả bài làm (TestResult)
+    tr = db_session.query(TestResult).filter(
+        TestResult.testId == test.id,
+        TestResult.studentId == student.id
+    ).first()
+
+    if not tr:
+        return jsonify({"hasTest": True, "submitted": False})
+
+    # 4. Lấy danh sách câu hỏi để map với câu trả lời
+    questions = db_session.query(Question).filter(Question.testId == test.id).all()
+    
+    # 5. Parse câu trả lời từ JSON string sang Dict
+    student_answers = {}
+    if tr.answers:
+        try:
+            student_answers = json.loads(tr.answers)
+        except:
+            student_answers = {}
+
+    # 6. Ghép Câu hỏi + Câu trả lời
+    details_list = []
+    for q in questions:
+        # Key lưu bên student là "answer_{id}"
+        ans_key = f"answer_{q.id}"
+        user_ans = student_answers.get(ans_key, "(Không trả lời)")
+        details_list.append({
+            "question": q.content,
+            "answer": user_ans
+        })
+
+    return jsonify({
+        "hasTest": True,
+        "submitted": True,
+        "score": tr.score,
+        "details": details_list
+    })
 # =========================
 # VIEW APPLICATIONS (DASHBOARD CÔNG TY)
 # =========================
@@ -293,6 +380,8 @@ def view_test_results(job_id):
 # =========================
 # EVALUATE APPLICATIONS (CẬP NHẬT: GỬI LỊCH PHỎNG VẤN)
 # =========================
+# Trong routers/company_router.py
+
 @company_bp.route("/applications/<int:app_id>/evaluate", methods=["POST"])
 def evaluate_application(app_id):
     data = request.json
@@ -307,38 +396,49 @@ def evaluate_application(app_id):
         db_session.add(evaluation)
         
         # B. Cập nhật trạng thái Application & Tạo thông báo
-        app = db_session.query(Application).filter(Application.id == app_id).first()       
-        if app:
+        # ⚠️ ĐỔI TÊN BIẾN 'app' -> 'application' ĐỂ TRÁNH LỖI TRÙNG TÊN
+        application = db_session.query(Application).filter(Application.id == app_id).first()       
+        
+        if application:
             next_status = data.get("nextStatus") # 'interview' hoặc 'rejected'
             notif_content = ""
             
             # 1. TRƯỜNG HỢP DUYỆT PHỎNG VẤN
             if next_status == "interview":
-                app.status = ApplicationStatus.INTERVIEW
+                application.status = ApplicationStatus.INTERVIEW
                 
-                # Lấy thông tin phỏng vấn từ request
-                interview_time = data.get("interviewTime")      # Dạng chuỗi hoặc datetime
+                # Lấy thông tin từ request
+                interview_time_str = data.get("interviewTime")      
                 interview_location = data.get("interviewLocation")
                 interview_note = data.get("interviewNote")
 
-                # Lưu vào bảng Interview (nếu model Interview hỗ trợ các trường này)
-                # Lưu ý: Nếu model Interview của bạn chưa có các cột này, bạn có thể cần cập nhật DB Schema
                 try:
-                    # Giả sử model Interview có cấu trúc: applicationId, scheduleTime, location, note
+                    # Xử lý thời gian: Chuyển chuỗi sang datetime object
+                    final_time = None
+                    if interview_time_str:
+                        # Input datetime-local trả về dạng "YYYY-MM-DDTHH:MM"
+                        final_time = datetime.strptime(interview_time_str, "%Y-%m-%dT%H:%M")
+
+                    # Lưu vào bảng Interview (Dùng tên cột chuẩn trong models)
                     new_interview = Interview(
-                        applicationId=app.id,
-                        scheduleTime=interview_time,
+                        applicationId=application.id,  # Dùng biến application
+                        interviewDate=final_time,      # ⚠️ Sửa scheduleTime -> interviewDate
                         location=interview_location,
-                        note=interview_note
+                        note=interview_note,
+                        status="Scheduled"
                     )
                     db_session.add(new_interview)
+                    
                 except Exception as ex_inv:
-                    print(f"Lưu interview record thất bại (có thể do thiếu cột DB): {ex_inv}")
+                    print(f"❌ Lỗi lưu interview record: {ex_inv}")
 
                 # Tạo nội dung thông báo chi tiết
-                notif_content = f"🎉 Chúc mừng! Hồ sơ '{app.job.title}' đã được DUYỆT phỏng vấn."
-                if interview_time:
-                    notif_content += f" ⏰ Thời gian: {interview_time}."
+                # Format lại giờ hiển thị cho đẹp (bỏ chữ T)
+                time_display = interview_time_str.replace("T", " ") if interview_time_str else "Chưa xác định"
+                
+                notif_content = f"🎉 Chúc mừng! Hồ sơ '{application.job.title}' đã được DUYỆT phỏng vấn."
+                if interview_time_str:
+                    notif_content += f" ⏰ Thời gian: {time_display}."
                 if interview_location:
                     notif_content += f" 📍 Địa điểm: {interview_location}."
                 if interview_note:
@@ -346,13 +446,13 @@ def evaluate_application(app_id):
 
             # 2. TRƯỜNG HỢP TỪ CHỐI
             elif next_status == "rejected":
-                app.status = ApplicationStatus.REJECTED
-                notif_content = f"⚠️ Rất tiếc, hồ sơ ứng tuyển '{app.job.title}' của bạn đã bị từ chối."
+                application.status = ApplicationStatus.REJECTED
+                notif_content = f"⚠️ Rất tiếc, hồ sơ ứng tuyển '{application.job.title}' của bạn đã bị từ chối."
 
             # C. Gửi thông báo cho Student
-            if notif_content and app.student:
+            if notif_content and application.student:
                 new_notif = Notification(
-                    userId=app.student.userId,
+                    userId=application.student.userId,
                     content=notif_content,
                     isRead=False
                 )
@@ -360,11 +460,11 @@ def evaluate_application(app_id):
 
         db_session.commit()
         return jsonify({"message": "Đã đánh giá và gửi thông báo thành công"}), 201
+        
     except Exception as e:
         db_session.rollback()
         print(f"Lỗi đánh giá: {e}")
         return jsonify({"detail": f"Lỗi server: {str(e)}"}), 500
-
 
 # =========================
 # GET JOB DETAIL
