@@ -31,7 +31,22 @@ scr/                                # Thư mục gốc chứa mã nguồn của 
 ├── .gitignore                      # Quản lý Git
 └── requirements.txt                # Danh sách thư viện cài đặt
 ```
+## ✨ Key Features (Tính năng chính)
 
+* **👥 Quản lý người dùng (Users):**
+    * Phân quyền: Admin, Doanh nghiệp (Company), Sinh viên/Ứng viên (Student).
+    * Đăng ký, đăng nhập, xác thực.
+* **🏢 Dành cho Doanh nghiệp:**
+    * Đăng tin tuyển dụng (Job Posting).
+    * Quản lý hồ sơ ứng tuyển.
+    * Tìm kiếm ứng viên theo năng lực.
+* **🎓 Dành cho Ứng viên:**
+    * Tạo và quản lý hồ sơ cá nhân (Profile).
+    * Tìm kiếm việc làm và nộp đơn ứng tuyển.
+    * Thực hiện bài đánh giá năng lực (Competency Assessment).
+* **⚙️ Hệ thống:**
+    * Kiến trúc Clean Architecture dễ mở rộng.
+    * API chuẩn RESTful.
 ## Download source code (CMD)
 ```bash
   git clone https://github.com/chienthang882006-bot/A-platform-that-supports-businesses-in-competency-based-recruitment.git
