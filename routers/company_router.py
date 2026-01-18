@@ -2,11 +2,18 @@ from flask import Blueprint, request, jsonify
 from database import db_session
 # Import models chính xác từ các file tương ứng
 from models.job_models import Job, SkillTest, Question
-from models.user_models import Company, Student
+from models.user_models import Company, Student, CompanyProfile
 from models.app_models import Application, ApplicationStatus, Evaluation, TestResult, Interview, Notification
 
 company_bp = Blueprint("company_router", __name__)
 
+def safe_int(value, default=0):
+    try:
+        if value is None or str(value).strip() == "":
+            return default
+        return int(value)
+    except (ValueError, TypeError):
+        return default
 # =========================
 # GET ALL JOBS BY COMPANY
 # =========================
@@ -52,6 +59,7 @@ def get_company_by_user(user_id):
 # =========================
 @company_bp.route("/companies/user/<int:user_id>/profile", methods=["GET"])
 def get_company_profile(user_id):
+    # BƯỚC 1: Lấy thông tin cơ bản từ bảng Company
     company = db_session.query(Company).filter(
         Company.userId == user_id
     ).first()
@@ -59,17 +67,27 @@ def get_company_profile(user_id):
     if not company:
         return jsonify({"detail": "Company not found"}), 404
 
-    return jsonify({
-        "id": company.id,
-        "companyName": company.companyName,
-        "description": company.description,
-        "website": company.website,
-        "address": getattr(company, "address", None),
-        "industry": getattr(company, "industry", None),
-        "size": getattr(company, "size", None),
-        "logoUrl": getattr(company, "logoUrl", None)
-    })
+    # BƯỚC 2: Lấy thông tin chi tiết từ bảng CompanyProfile
+    # Dùng company.id để tìm profile tương ứng
+    profile = db_session.query(CompanyProfile).filter(
+        CompanyProfile.companyId == company.id
+    ).first()
 
+    # BƯỚC 3: Gộp dữ liệu trả về
+    return jsonify({
+        # --- Dữ liệu từ bảng Company ---
+        "id": company.id,
+        "companyName": company.companyName, 
+        
+        # --- Dữ liệu từ bảng CompanyProfile ---
+        # Kiểm tra "if profile" vì có thể công ty mới tạo chưa có profile
+        "description": profile.description if profile else "",
+        "website": profile.website if profile else "",
+        "address": profile.address if profile else "",
+        "industry": profile.industry if profile else "",
+        "size": profile.size if profile else "",
+        "logoUrl": profile.logoUrl if profile else ""
+    })
 
 # =========================
 # UPDATE COMPANY PROFILE
@@ -78,6 +96,7 @@ def get_company_profile(user_id):
 def update_company_profile(company_id):
     data = request.json
 
+    # BƯỚC 1: Tìm công ty trong bảng Company
     company = db_session.query(Company).filter(
         Company.id == company_id
     ).first()
@@ -86,27 +105,30 @@ def update_company_profile(company_id):
         return jsonify({"detail": "Company not found"}), 404
 
     try:
+        # BƯỚC 2: Cập nhật tên công ty (Bảng Company)
         if "companyName" in data:
             company.companyName = data["companyName"]
 
-        if "description" in data:
-            company.description = data["description"]
+        # BƯỚC 3: Tìm hoặc Tạo mới Profile (Bảng CompanyProfile)
+        profile = db_session.query(CompanyProfile).filter(
+            CompanyProfile.companyId == company.id
+        ).first()
+        
+        # Nếu chưa có profile thì tạo mới (INSERT)
+        if not profile:
+            profile = CompanyProfile(companyId=company.id)
+            db_session.add(profile)
+            db_session.flush() # Flush để object profile sẵn sàng nhận dữ liệu
 
-        if "website" in data:
-            company.website = data["website"]
+        # BƯỚC 4: Cập nhật thông tin chi tiết vào Profile
+        if "description" in data: profile.description = data["description"]
+        if "website" in data: profile.website = data["website"]
+        if "address" in data: profile.address = data["address"]
+        if "industry" in data: profile.industry = data["industry"]
+        if "size" in data: profile.size = data["size"]
+        if "logoUrl" in data: profile.logoUrl = data["logoUrl"]
 
-        if "address" in data:
-            company.address = data["address"]
-
-        if "industry" in data:
-            company.industry = data["industry"]
-
-        if "size" in data:
-            company.size = data["size"]
-
-        if "logoUrl" in data:
-            company.logoUrl = data["logoUrl"]
-
+        # BƯỚC 5: Lưu tất cả thay đổi
         db_session.commit()
         return jsonify({"message": "Cập nhật hồ sơ công ty thành công"})
 
@@ -116,7 +138,6 @@ def update_company_profile(company_id):
         return jsonify({
             "detail": f"Lỗi cập nhật hồ sơ công ty: {str(e)}"
         }), 500
-
 # =========================
 # CREATE JOB & TEST
 # =========================
@@ -131,21 +152,27 @@ def create_job():
             description=data["description"],
             location=data.get("location"),
             status=data.get("status", "open"),
-            maxApplicants=data.get("maxApplicants")
+            maxApplicants=safe_int(data.get("maxApplicants"), 0) # Fix lỗi int
         )
         db_session.add(new_job)
         db_session.flush() 
+
         # 2. KIỂM TRA & TẠO BÀI TEST
         test_data = data.get("test")       
         if test_data:
+            # Fix lỗi duration/totalScore bị None
+            t_duration = safe_int(test_data.get("duration"), 30)
+            t_score = safe_int(test_data.get("totalScore"), 100)
+            
             new_test = SkillTest(
                 jobId=new_job.id,
                 testName=test_data.get("testName", f"Test for {new_job.title}"),
-                duration=test_data.get("duration", 30),
-                totalScore=test_data.get("totalScore", 100)
+                duration=t_duration,
+                totalScore=t_score
             )
             db_session.add(new_test)
             db_session.flush() 
+
             # 3. TẠO CÂU HỎI
             questions_data = test_data.get("questions", [])
             for q in questions_data:
@@ -156,15 +183,11 @@ def create_job():
                     correctAnswer=q["correctAnswer"]
                 )
                 db_session.add(new_question)
-        # 4. LƯU TẤT CẢ VÀO DB
+
         db_session.commit()
         return jsonify({
-            "message": "Đã tạo công việc và bài test thành công",
-            "job": {
-                "id": new_job.id,
-                "title": new_job.title
-            },
-            "hasTest": True if test_data else False
+            "message": "Đã tạo công việc thành công",
+            "job": {"id": new_job.id, "title": new_job.title}
         }), 201
     except Exception as e:
         db_session.rollback() 
@@ -178,35 +201,36 @@ def create_job():
 @company_bp.route("/jobs/<int:job_id>/test", methods=["POST"])
 def create_skill_test(job_id):
     data = request.json
-
-    # 1. Tạo bài Test
-    test = SkillTest(
-        jobId=job_id,
-        testName=data["testName"],
-        duration=data["duration"],
-        totalScore=data.get("totalScore", 100) # Mặc định 100 nếu không gửi
-    )
-    db_session.add(test)
-    db_session.commit()
-    db_session.refresh(test) # Lấy ID của test vừa tạo
-
-    # 2. Lưu danh sách câu hỏi (Nếu có)
-    if "questions" in data and isinstance(data["questions"], list):
-        for q in data["questions"]:
-            new_question = Question(
-                testId=test.id,
-                content=q["content"],
-                options=q["options"], 
-                correctAnswer=q["correctAnswer"]
-            )
-            db_session.add(new_question)    
+    try:
+        # Fix lỗi duration bị None
+        t_duration = safe_int(data.get("duration"), 30)
+        t_score = safe_int(data.get("totalScore"), 100)
+        
+        test = SkillTest(
+            jobId=job_id,
+            testName=data.get("testName", "Skill Test"),
+            duration=t_duration,
+            totalScore=t_score
+        )
+        db_session.add(test)
         db_session.commit()
-    return jsonify({
-        "id": test.id,
-        "testName": test.testName,
-        "message": "Đã tạo bài test và câu hỏi thành công"
-    }), 201
+        db_session.refresh(test)
 
+        if "questions" in data and isinstance(data["questions"], list):
+            for q in data["questions"]:
+                new_question = Question(
+                    testId=test.id,
+                    content=q["content"],
+                    options=str(q.get("options", "")), 
+                    correctAnswer=q["correctAnswer"]
+                )
+                db_session.add(new_question)    
+            db_session.commit()
+            
+        return jsonify({"id": test.id, "message": "Đã tạo bài test thành công"}), 201
+    except Exception as e:
+        db_session.rollback()
+        return jsonify({"detail": f"Lỗi tạo bài test: {str(e)}"}), 500
 
 # =========================
 # VIEW APPLICATIONS (DASHBOARD CÔNG TY)
@@ -362,59 +386,100 @@ def get_job_detail(job_id):
     })
 
 
+
 # =========================
-# UPDATE JOB
+# UPDATE JOB 
+# =========================
+# =========================
+# UPDATE JOB (BẢN SỬA LỖI HOÀN CHỈNH - HẾT BÁO ĐỎ)
 # =========================
 @company_bp.route("/jobs/<int:job_id>", methods=["PUT"])
 def update_job(job_id):
-    data = request.json
+    # 1. Lấy dữ liệu an toàn
+    data = request.get_json(silent=True) or request.form
+    if not data:
+        return jsonify({"detail": "Không có dữ liệu gửi lên"}), 400
+
     job = db_session.query(Job).filter(Job.id == job_id).first()
     if not job:
         return jsonify({"detail": "Job not found"}), 404
+        
     try:
-        # 1. Cập nhật thông tin cơ bản
-        if "title" in data: job.title = data["title"]
-        if "description" in data: job.description = data["description"]
-        if "location" in data: job.location = data["location"]
-        if "status" in data: job.status = data["status"]
-        if "maxApplicants" in data:job.maxApplicants = data["maxApplicants"]
-        # 2. Cập nhật bài Test
-        if "test" in data and data["test"]:
-            test_data = data["test"]           
+        # 2. Cập nhật thông tin cơ bản
+        # Ép kiểu str() để VS Code Pylance không báo lỗi
+        if "title" in data:
+            val = data.get("title")
+            if val is not None: job.title = str(val)
+            
+        if "description" in data:
+            val = data.get("description")
+            if val is not None: job.description = str(val)
+            
+        if "location" in data:
+            val = data.get("location")
+            if val is not None: job.location = str(val)
+            
+        if "status" in data:
+            val = data.get("status")
+            if val is not None: job.status = str(val)
+        
+        # Dùng safe_int để sửa lỗi "int() argument must be..."
+        if "maxApplicants" in data:
+            job.maxApplicants = safe_int(data.get("maxApplicants"), 0)
+
+        # 3. Cập nhật bài Test
+        test_source = None
+        if "test" in data and isinstance(data["test"], dict):
+            test_source = data["test"]
+        elif "testName" in data: 
+            test_source = data
+
+        if test_source:
+            # Chuyển đổi an toàn về dict nếu test_source đang là string
+            test_dict = test_source if isinstance(test_source, dict) else {"testName": str(test_source)}
+
             skill_test = db_session.query(SkillTest).filter(SkillTest.jobId == job.id).first()
-            if not skill_test:
-                skill_test = SkillTest(
-                    jobId=job.id,
-                    testName=test_data.get("testName", f"Test for {job.title}"),
-                    duration=test_data.get("duration", 30),
-                    totalScore=test_data.get("totalScore", 100)
-                )
-                db_session.add(skill_test)
-                db_session.flush()
-            else:
-                skill_test.testName = test_data.get("testName", skill_test.testName)
-                skill_test.duration = test_data.get("duration", skill_test.duration)
-                skill_test.totalScore = test_data.get("totalScore", skill_test.totalScore)
-            # 3. Cập nhật câu hỏi
-            questions_data = test_data.get("questions", [])
-            if questions_data:
-                db_session.query(Question).filter(Question.testId == skill_test.id).delete()                
-                for q in questions_data:
-                    new_q = Question(
-                        testId=skill_test.id,
-                        content=q["content"],
-                        options=str(q["options"]),
-                        correctAnswer=q["correctAnswer"]
+            
+            # Lấy giá trị an toàn (QUAN TRỌNG: Fix lỗi duration khi edit thời gian)
+            t_name = str(test_dict.get("testName") or "")
+            t_duration = safe_int(test_dict.get("duration"), 30)
+            t_score = safe_int(test_dict.get("totalScore"), 100)
+
+            if t_name: 
+                if not skill_test:
+                    skill_test = SkillTest(
+                        jobId=job.id,
+                        testName=t_name,
+                        duration=t_duration,
+                        totalScore=t_score
                     )
-                    db_session.add(new_q)
+                    db_session.add(skill_test)
+                    db_session.flush()
+                else:
+                    skill_test.testName = t_name
+                    skill_test.duration = t_duration
+                    skill_test.totalScore = t_score
+                
+                # 4. Cập nhật câu hỏi
+                questions_data = test_dict.get("questions")
+                if questions_data and isinstance(questions_data, list):
+                    db_session.query(Question).filter(Question.testId == skill_test.id).delete()                
+                    for q in questions_data:
+                        new_q = Question(
+                            testId=skill_test.id,
+                            content=str(q.get("content") or ""),
+                            options=str(q.get("options") or ""), 
+                            correctAnswer=str(q.get("correctAnswer") or "")
+                        )
+                        db_session.add(new_q)
+
         db_session.commit()
         return jsonify({"message": "Cập nhật thành công", "id": job.id})
+
     except Exception as e:
         db_session.rollback()
-        print(f"Update error: {e}")
+        print(f"Update error: {e}") 
         return jsonify({"detail": f"Lỗi cập nhật: {str(e)}"}), 500
-    
-
 # =========================
 # GET APPLICATIONS BY JOB ID
 # =========================
@@ -435,27 +500,53 @@ def get_applications_by_job(job_id):
         })
     return jsonify(response)
 
-# =========================
-# XEM CV ỨNG VIÊN (COMPANY)
+# ========================= 
+# XEM CHI TIẾT HỒ SƠ ỨNG VIÊN (ĐÃ FIX LỖI KEY ERROR)
 # =========================
 @company_bp.route("/companies/applications/<int:app_id>/cv", methods=["GET"])
 def company_view_candidate_cv(app_id):
-    app = db_session.query(Application).filter(
-        Application.id == app_id
-    ).first()
-
+    # 1. Lấy Application
+    app = db_session.query(Application).filter(Application.id == app_id).first()
     if not app:
         return jsonify({"detail": "Application not found"}), 404
 
     student = app.student
-    if not student or not student.profile or not student.profile.cvUrl:
-        return jsonify({"detail": "Ứng viên chưa có CV"}), 404
+    if not student:
+        return jsonify({"detail": "Không tìm thấy thông tin ứng viên"}), 404
 
-    return jsonify({
+    profile = student.profile
+    
+    # 2. Lấy danh sách kỹ năng
+    skills_list = []
+    if student.skills:
+        for s in student.skills:
+            skill_name = s.skill.name if s.skill else "Unknown Skill"
+            skills_list.append({
+                "name": skill_name,
+                "level": s.level
+            })
+
+    # 3. Trả về dữ liệu (Đã sửa lại key 'studentName' cho khớp với giao diện)
+    response_data = {
         "applicationId": app.id,
-        "studentId": student.id,
-        "studentName": student.fullName,
-        "major": student.major,
         "jobTitle": app.job.title,
-        "cvUrl": student.profile.cvUrl
-    })
+        "appliedAt": app.appliedAt,
+        "status": app.status.value if hasattr(app.status, 'value') else app.status,
+
+        # QUAN TRỌNG: Giữ nguyên key là 'studentName' để giao diện không bị lỗi
+        "studentId": student.id,
+        "studentName": student.fullName,  # <--- Đã sửa từ fullName thành studentName
+        "major": student.major,
+        "dob": student.dob.isoformat() if student.dob else None,
+        "cccd": getattr(student, "cccd", None),
+
+        "cvUrl": profile.cvUrl if profile else None,
+        "portfolioUrl": getattr(profile, "portfolioUrl", None),
+        "about": profile.about if profile else "",
+        "educationLevel": profile.educationLevel if profile else "",
+        "degrees": profile.degrees if profile else "",
+
+        "skills": skills_list
+    }
+
+    return jsonify(response_data)

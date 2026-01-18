@@ -1,12 +1,34 @@
 from flask import Flask, request, session, redirect, url_for
 import requests
-import json  # [MỚI] Cần import json để xử lý dữ liệu câu hỏi
+import json
+
+# === 1. IMPORT CƠ SỞ DỮ LIỆU & ROUTERS ===
+from database import db_session, init_db
+from routers.user_router import user_bp
+from routers.company_router import company_bp
+from routers.student_router import student_bp
+# Nếu bạn có các file router khác thì import thêm vào đây:
+# from routers.student_router import student_bp 
+# from routers.admin_router import admin_bp
 
 app = Flask(__name__)
 app.secret_key = 'labodc_secret_key'
-API_URL = "http://127.0.0.1:8000/api"
 
+# === 2. CẤU HÌNH API URL (Trỏ về chính nó) ===
+API_URL = "http://127.0.0.1:8001/api" 
 
+# === 3. ĐĂNG KÝ ROUTERS (QUAN TRỌNG NHẤT) ===
+# Dòng này giúp app.py hiểu được các đường dẫn /api/users, /api/companies...
+app.register_blueprint(user_bp, url_prefix='/api')
+app.register_blueprint(company_bp, url_prefix='/api')
+app.register_blueprint(student_bp, url_prefix='/api')
+# app.register_blueprint(student_bp, url_prefix='/api')
+# app.register_blueprint(admin_bp, url_prefix='/api')
+
+# === 4. TỰ ĐỘNG ĐÓNG DB SESSION ===
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db_session.remove()
 # ======================
 # LAYOUT & NOTIFICATIONS
 # ======================
@@ -15,20 +37,17 @@ def show_notifications():
         return ""
     
     try:
-        # Gọi API lấy thông báo
         res = requests.get(f"{API_URL}/notifications/{session['user']['id']}")
-        
         count = 0
         list_html = ""
 
         if res.status_code == 200:
             notifs = res.json()
-            count = len(notifs) # Đếm số lượng
-
+            count = len(notifs)
             if count == 0:
                 list_html = "<div class='notif-item'>Không có thông báo mới</div>"
             else:
-                for n in notifs[:5]: # Chỉ lấy 5 tin mới nhất
+                for n in notifs[:5]:
                     list_html += f"""
                     <div class="notif-item">
                         <div class="notif-content">{n.get('content', 'Thông báo mới')}</div>
@@ -61,7 +80,6 @@ def wrap_layout(content):
 
     if 'user' in session and not hide_sidebar:
         user = session['user']
-        
         menu = ""
         if user['role'] == 'student':
             menu = """
@@ -82,7 +100,6 @@ def wrap_layout(content):
             <a href="/admin/jobs">📄 Duyệt Job</a>
             """
 
-
         sidebar = f"""
         <div class="sidebar">
             <div class="profile">
@@ -98,15 +115,16 @@ def wrap_layout(content):
     else:
         sidebar = ""
 
+    # LƯU Ý: Phần CSS dưới đây đã được dùng 2 dấu ngoặc {{ }} để tránh lỗi Python
     return f"""
     <html>
     <head>
         <meta charset="UTF-8">
         <title>LabOdc Recruitment</title>
-
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
         <style>
             /* ===== BASIC STYLES ===== */
-            body {{ margin: 0; font-family: Arial, sans-serif; background: #f0f2f5; }}
+            body {{ margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; color: #333; }}
             
             /* APP BAR */
             .app-bar {{
@@ -150,25 +168,44 @@ def wrap_layout(content):
             .menu a:hover {{ background: #1e293b; }}
             .main {{
                 margin-left: 220px; margin-top: 60px; padding: 30px;
-                min-height: calc(100vh - 60px); background: white; box-sizing: border-box;
+                min-height: calc(100vh - 60px); background: #f8fafc; box-sizing: border-box;
             }}
             .no-sidebar .main {{ margin-left: 0; }}
 
             /* UI ELEMENTS */
             .job-card {{
-                border-left: 6px solid #ff4b4b; padding: 15px; margin: 15px 0;
-                background: #fafafa; border-radius: 8px;
+                border-left: 5px solid #2563eb; padding: 20px; margin: 15px 0;
+                background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
             }}
-            label {{ font-weight: bold; margin-top: 12px; display: block; }}
+            label {{ font-weight: 600; margin-top: 12px; display: block; font-size: 14px; color: #334155; }}
             input, select, textarea {{
                 width: 100%; padding: 10px; margin: 8px 0;
-                border-radius: 5px; border: 1px solid #ddd;
+                border-radius: 6px; border: 1px solid #cbd5e1; font-family: inherit;
+                box-sizing: border-box;
             }}
+            /* FIX LỖI: Đã nhân đôi ngoặc nhọn ở đây */
+            input:focus, select:focus, textarea:focus {{ outline: 2px solid #2563eb; border-color: transparent; }}
+            
             button {{
                 background: #2563eb; color: white; padding: 10px; border: none;
-                width: 100%; border-radius: 6px; cursor: pointer; font-size: 14px;
+                width: 100%; border-radius: 6px; cursor: pointer; font-weight: 600;
+                transition: background 0.2s;
             }}
-            button:hover {{ background: #1e40af; }}
+            button:hover {{ background: #1d4ed8; }}
+
+            /* CV DETAILS STYLES */
+            .cv-container {{ display: flex; gap: 20px; }}
+            .cv-left {{ flex: 1; text-align: center; padding-right: 20px; border-right: 1px solid #e2e8f0; }}
+            .cv-right {{ flex: 2; }}
+            .badge-skill {{ 
+                display: inline-block; background: #e0f2fe; color: #0284c7; 
+                padding: 5px 10px; border-radius: 20px; font-size: 12px; 
+                margin-right: 5px; margin-bottom: 5px; font-weight: 600;
+            }}
+            .section-title {{ 
+                font-size: 16px; font-weight: bold; color: #2563eb; 
+                border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin-top: 20px; margin-bottom: 10px; 
+            }}
         </style>
     </head>
 
@@ -204,7 +241,6 @@ def wrap_layout(content):
     </body>
     </html>
     """
-
 # ======================
 # AUTH ROUTES
 # ======================
@@ -454,17 +490,17 @@ def student_profile():
         <input name="fullName" value="{student.get('fullName','')}">
         <label>Ngành học</label>
         <input name="major" value="{student.get('major','')}">
-        <label>Giới thiệu</label>
-        <textarea name="about">{profile.get('about','')}</textarea>
-        <label>Trình độ học vấn</label>
+        <label>Giới thiệu bản thân</label>
+        <textarea name="about" rows="3">{profile.get('about','')}</textarea>
+        <label>Trình độ học vấn (VD: Đại học, Cao đẳng)</label>
         <input name="educationLevel" value="{profile.get('educationLevel','')}">
-        <label>Bằng cấp</label>
+        <label>Bằng cấp / Chứng chỉ</label>
         <input name="degrees" value="{profile.get('degrees','')}">
-        <label>Link CV</label>
+        <label>Link CV (PDF/Drive)</label>
         <input name="cvUrl" value="{profile.get('cvUrl','')}">
-        <label>Portfolio</label>
+        <label>Link Portfolio</label>
         <input name="portfolioUrl" value="{profile.get('portfolioUrl','')}">
-        <label>Kỹ năng </label>
+        <label>Kỹ năng (Định dạng: Tên:Level, VD: Python:5, Java:4)</label>
         <input name="skills" value="{skills_text}">
         <button>💾 Lưu hồ sơ</button>
     </form>
@@ -472,25 +508,55 @@ def student_profile():
     return wrap_layout(content)
 
 
+# Trong app.py
+
 @app.route('/student/applications')
 def student_applications():
     if 'user' not in session: return redirect('/login')
-    content = "<h2>📌 Việc làm đã ứng tuyển</h2>"
+    
+    user_id = session['user']['id']
     try:
-        user_id = session['user']['id']
-        stu = requests.get(f"{API_URL}/students/user/{user_id}").json()
-        apps = requests.get(f"{API_URL}/students/{stu['id']}/applications").json()
-        for a in apps:
-            content += f"""
-            <div class="job-card">
-                <b>{a['jobTitle']}</b><br>
-                Trạng thái: {a['status']}
-            </div>
-            """
-    except:
-        content += "<p>Lỗi tải dữ liệu</p>"
-    return wrap_layout(content)
+        # Lấy ID sinh viên
+        stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
+        if stu_res.status_code != 200: return wrap_layout("<h2>⚠️ Lỗi hồ sơ sinh viên</h2>")
+        student_id = stu_res.json()['id']
 
+        # Gọi API vừa sửa ở bước 1
+        apps = requests.get(f"{API_URL}/students/{student_id}/applications").json()
+    except Exception as e:
+        return wrap_layout(f"<h2>❌ Lỗi kết nối: {e}</h2>")
+
+    html = ""
+    for a in apps:
+        # --- ĐOẠN CODE ĐỂ HIỆN NÚT TEST ---
+        test_btn = ""
+        if a.get('hasTest'): # Nếu có bài test
+            if a['testStatus'] == 'pending':
+                # Chưa làm -> Hiện nút
+                test_btn = f"""
+                <div style="margin-top:10px;">
+                    <a href="/student/test/{a['testId']}">
+                        <button style="background:#f97316; width:auto; padding:5px 15px; font-size:12px;">✍️ Làm bài Test ngay</button>
+                    </a>
+                </div>
+                """
+            elif a['testStatus'] == 'done':
+                # Đã làm -> Hiện thông báo xanh
+                test_btn = "<div style='margin-top:5px; color:green; font-size:13px;'>✅ Đã hoàn thành bài kiểm tra</div>"
+        # ----------------------------------
+
+        html += f"""
+        <div class="job-card">
+            <div style="display:flex; justify-content:space-between;">
+                <h3 style="margin:0;">{a['jobTitle']}</h3>
+                <span style="background:#e0f2fe; color:#0284c7; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{a['status']}</span>
+            </div>
+            <p style="margin:5px 0; color:#666;">🏢 {a['companyName']}</p>
+            <p style="font-size:12px; color:#999;">Ngày ứng tuyển: {a['appliedAt']}</p>
+            {test_btn} </div>
+        """
+    
+    return wrap_layout(f"<h2>📌 Việc làm đã ứng tuyển</h2>{html if html else '<p>Chưa có dữ liệu</p>'}")
 
 @app.route("/student/tests/<int:job_id>")
 def student_tests(job_id):
@@ -542,7 +608,6 @@ def student_do_test(test_id):
         return wrap_layout(f"<p>❌ Không thể bắt đầu bài test: {msg}</p>")
     questions_html = ""
     for idx, q in enumerate(test.get("questions", []), start=1):
-        # [CẬP NHẬT] Đổi từ input text sang textarea cho câu hỏi tự luận
         questions_html += f"""
         <div class="job-card">
             <b>Câu {idx}:</b> {q['content']}<br>
@@ -620,24 +685,153 @@ def student_test_submit(test_id):
 # ======================
 # COMPANY ROUTES
 # ======================
+# app.py
+
 @app.route('/company/home')
 def company_home():
     if 'user' not in session or session['user']['role'] != 'company':
         return redirect('/login')
+    
     content = f"""
     <h2>🏢 Dashboard Doanh nghiệp</h2>
     <p>Xin chào <b>{session['user']['email']}</b></p>
-    <div class="job-card">
-        <h3>📄 Quản lý tin tuyển dụng</h3>
-        <a href="/company/jobs">Xem danh sách job</a>
-    </div>
-    <div class="job-card">
-        <h3>📥 Hồ sơ ứng tuyển</h3>
-        <a href="/company/applications">Xem ứng viên</a>
+    
+    <div style="display:flex; gap:15px; flex-wrap:wrap;">
+        <div class="job-card" style="flex:1; min-width:300px; border-left:5px solid #16a34a;">
+            <h3>⚙️ Hồ sơ công ty</h3>
+            <p>Cập nhật thông tin, logo, website để thu hút ứng viên.</p>
+            <a href="/company/profile"><button style="background:#16a34a;">Cập nhật ngay</button></a>
+        </div>
+
+        <div class="job-card" style="flex:1; min-width:300px;">
+            <h3>📄 Quản lý tin tuyển dụng</h3>
+            <p>Xem, tạo mới và chỉnh sửa các bài đăng.</p>
+            <a href="/company/jobs"><button>Xem danh sách</button></a>
+        </div>
+
+        <div class="job-card" style="flex:1; min-width:300px;">
+            <h3>📥 Hồ sơ ứng tuyển</h3>
+            <p>Xem danh sách ứng viên đã nộp hồ sơ.</p>
+            <a href="/company/applications"><button>Xem ứng viên</button></a>
+        </div>
     </div>
     """
     return wrap_layout(content)
 
+
+
+# [APP.PY] QUẢN LÝ HỒ SƠ CÔNG TY (CẬP NHẬT & HIỂN THỊ NGAY)
+# ==========================================
+@app.route('/company/profile', methods=['GET', 'POST'])
+def company_profile():
+    # 1. Kiểm tra đăng nhập
+    if 'user' not in session or session['user']['role'] != 'company':
+        return redirect('/login')
+    
+    user_id = session['user']['id']
+    message = ""
+
+    # 2. XỬ LÝ LƯU (Khi người dùng bấm nút POST)
+    if request.method == 'POST':
+        payload = {
+            "companyName": request.form.get("companyName"),
+            "website": request.form.get("website"),
+            "address": request.form.get("address"),
+            "industry": request.form.get("industry"),
+            "size": request.form.get("size"),
+            "logoUrl": request.form.get("logoUrl"),
+            "description": request.form.get("description")
+        }
+        try:
+            # Lấy ID công ty
+            comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
+            if comp_res.status_code == 200:
+                company_id = comp_res.json()['id']
+                # Gọi API update
+                update_res = requests.put(f"{API_URL}/companies/{company_id}/profile", json=payload)
+                
+                if update_res.status_code == 200:
+                    message = "<div style='background:#dcfce7; color:#166534; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bbf7d0; font-weight:bold;'>✅ Đã lưu hồ sơ thành công!</div>"
+                else:
+                    message = f"<div style='color:red; margin-bottom:15px;'>❌ Lỗi API: {update_res.text}</div>"
+        except Exception as e:
+            message = f"<div style='color:red; margin-bottom:15px;'>❌ Lỗi kết nối: {e}</div>"
+
+    # 3. LẤY DỮ LIỆU MỚI NHẤT (QUAN TRỌNG: Chạy sau khi POST để lấy data vừa lưu)
+    company = {}
+    try:
+        res = requests.get(f"{API_URL}/companies/user/{user_id}/profile")
+        if res.status_code == 200:
+            company = res.json()
+    except:
+        pass
+
+    # 4. HIỂN THỊ GIAO DIỆN (Điền sẵn dữ liệu vào value="")
+    content = f"""
+    <h2>⚙️ Hồ sơ doanh nghiệp</h2>
+    {message}
+    
+    <div class="job-card">
+        <form method="post">
+            <div style="display:flex; gap:30px;">
+                <div style="flex:1; text-align:center;">
+                    <div style="border: 2px dashed #cbd5e1; border-radius: 12px; padding: 10px; margin-bottom: 15px;">
+                        <img src="{company.get('logoUrl') or 'https://via.placeholder.com/150?text=No+Logo'}" 
+                             style="width:100%; height:150px; object-fit:contain; border-radius:8px;"
+                             onerror="this.src='https://via.placeholder.com/150?text=Error'">
+                    </div>
+                    <label style="text-align:left; font-size:13px;">Link Logo (URL ảnh)</label>
+                    <input name="logoUrl" value="{company.get('logoUrl', '')}" placeholder="https://example.com/logo.png">
+                </div>
+
+                <div style="flex:3;">
+                    <label>Tên công ty <span style="color:red">*</span></label>
+                    <input name="companyName" value="{company.get('companyName', '')}" required style="font-weight:bold;">
+                    
+                    <div style="display:flex; gap:15px;">
+                        <div style="flex:1;">
+                            <label>Website</label>
+                            <input name="website" value="{company.get('website', '')}" placeholder="https://mycompany.com">
+                        </div>
+                        <div style="flex:1;">
+                            <label>Quy mô nhân sự</label>
+                            <select name="size">
+                                <option value="">-- Chọn quy mô --</option>
+                                <option value="Startup (1-10)" {'selected' if company.get('size')=='Startup (1-10)' else ''}>Startup (1-10)</option>
+                                <option value="Vừa (10-50)" {'selected' if company.get('size')=='Vừa (10-50)' else ''}>Vừa (10-50)</option>
+                                <option value="Lớn (50-200)" {'selected' if company.get('size')=='Lớn (50-200)' else ''}>Lớn (50-200)</option>
+                                <option value="Tập đoàn (>200)" {'selected' if company.get('size')=='Tập đoàn (>200)' else ''}>Tập đoàn (>200)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="display:flex; gap:15px;">
+                        <div style="flex:1;">
+                            <label>Lĩnh vực hoạt động</label>
+                            <input name="industry" value="{company.get('industry', '')}" placeholder="VD: IT Phần mềm, Marketing...">
+                        </div>
+                        <div style="flex:1;">
+                            <label>Địa chỉ trụ sở</label>
+                            <input name="address" value="{company.get('address', '')}" placeholder="VD: 123 Đường ABC, Quận 1...">
+                        </div>
+                    </div>
+
+                    <label>Giới thiệu công ty</label>
+                    <textarea name="description" rows="6" placeholder="Mô tả về văn hóa, lịch sử, chế độ đãi ngộ...">{company.get('description', '')}</textarea>
+                </div>
+            </div>
+
+            <hr style="border:0; border-top:1px solid #eee; margin: 20px 0;">
+
+            <div style="text-align:right;">
+                <button style="width:auto; padding:12px 30px; font-size:16px; background:#16a34a;">
+                    <i class="fa-solid fa-floppy-disk"></i> Lưu hồ sơ
+                </button>
+            </div>
+        </form>
+    </div>
+    """
+    return wrap_layout(content)
 
 @app.route('/company/jobs')
 def company_jobs():
@@ -664,15 +858,18 @@ def company_jobs():
     for j in my_jobs:
         content += f"""
         <div class="job-card">
-            <h3>{j['title']}</h3>
-            <p style="white-space: pre-line; color:#555;">{j['description']}</p>
+            <div style="display:flex; justify-content:space-between;">
+                <h3>{j['title']}</h3>
+                <span style="background:#e0f2fe; color:#0284c7; padding:4px 8px; border-radius:4px; font-size:12px; height:fit-content;">{j.get('status','OPEN')}</span>
+            </div>
+            <p style="white-space: pre-line; color:#555;">{j['description'][:150]}...</p>
             <p><b>Ứng viên:</b> {j.get('appliedCount', 0)} / {j.get('maxApplicants', '∞')}</p>       
             <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
                 <a href="/company/jobs/{j['id']}/edit" style="margin-right:15px; color:#f59e0b; font-weight:bold; text-decoration:none;">
-                    ✏️ Chỉnh sửa
+                    <i class="fa-solid fa-pen"></i> Chỉnh sửa
                 </a>
                 <a href="/company/jobs/{j['id']}/applications" style="color:#16a34a; font-weight:bold; text-decoration:none;">
-                    📥 Xem ứng viên
+                    <i class="fa-solid fa-users"></i> Xem ứng viên
                 </a>
             </div>
         </div>
@@ -699,14 +896,13 @@ def company_create_job():
             }
             if request.form.get('has_test') == 'on':
                 q_contents = request.form.getlist('q_content[]')
-                # [CẬP NHẬT] Không lấy options và answers nữa vì là tự luận
                 questions = []
                 for c in q_contents:
                     if c.strip():
                         questions.append({
                             "content": c,
-                            "options": "", # Rỗng cho tự luận
-                            "correctAnswer": "" # Rỗng cho tự luận
+                            "options": "", 
+                            "correctAnswer": "" 
                         })              
                 payload["test"] = {
                     "testName": request.form.get('testName', f"Test for {payload['title']}"),
@@ -766,7 +962,6 @@ def company_create_job():
         function addQuestion() {{
             var div = document.createElement("div");
             div.style.marginBottom = "10px"; div.style.padding = "10px"; div.style.background = "white"; div.style.border = "1px solid #ddd";
-            // [CẬP NHẬT] Giao diện chỉ còn ô nhập nội dung câu hỏi
             div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:5px;">Câu hỏi mới (Tự luận)</div>
             <textarea name="q_content[]" placeholder="Nhập nội dung câu hỏi..." required style="margin-bottom:5px; width:100%;" rows="3"></textarea>
             <button type="button" onclick="this.parentElement.remove()" style="background:#ef4444; width:auto; padding:4px 10px; font-size:12px; margin-top:5px;">Xóa</button>`;
@@ -808,7 +1003,6 @@ def company_edit_job(job_id):
             }
             if request.form.get('has_test') == 'on':
                 q_contents = request.form.getlist('q_content[]')
-                # [CẬP NHẬT] Bỏ options/answers
                 questions_list = []
                 for c in q_contents:
                     if c.strip(): questions_list.append({"content": c, "options": "", "correctAnswer": ""})
@@ -838,6 +1032,8 @@ def company_edit_job(job_id):
             <label>Tiêu đề</label><input name="title" required value="{job['title']}">
             <label>Mô tả</label><textarea name="description" required style="min-height:120px;">{job['description']}</textarea>
             <label>Địa điểm</label><input name="location" value="{job.get('location', '')}">
+            <label>Số ứng viên tối đa</label>
+            <input name="maxApplicants" type="number" min="1" value="{job.get('maxApplicants', 0)}">
         </div>
         <div class="job-card" style="border-left: 6px solid #2563eb; background:#f0f9ff;">
             <label style="display:flex; align-items:center; cursor:pointer; color:#2563eb; margin-bottom:15px;">
@@ -866,7 +1062,6 @@ def company_edit_job(job_id):
             var container = document.getElementById("questions-container");
             var div = document.createElement("div");
             div.style.marginBottom = "15px"; div.style.padding = "15px"; div.style.background = "white"; div.style.border = "1px solid #cbd5e1";
-            // [CẬP NHẬT] Giao diện edit chỉ còn textarea nội dung
             div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:8px;">Câu hỏi </div>
             <textarea name="q_content[]" placeholder="Nội dung câu hỏi..." required style="margin-bottom:8px; width:100%;" rows="3">${{content}}</textarea>
             <button type="button" onclick="this.parentElement.remove()" style="background:#ef4444; width:auto; padding:4px 10px; font-size:11px; margin-top:5px;">Xóa</button>`;
@@ -899,7 +1094,7 @@ def company_applications():
         content += "<p style='color:#666;'>Chưa có hồ sơ nào.</p>"
     else:
         content += """
-        <table style="width:100%; border-collapse:collapse; background:white; margin-top:20px;">
+        <table style="width:100%; border-collapse:collapse; background:white; margin-top:20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-radius:8px; overflow:hidden;">
             <thead style="background:#f1f5f9; border-bottom:2px solid #e2e8f0;">
                 <tr>
                     <th style="padding:15px; text-align:left;">Ứng viên</th>
@@ -927,27 +1122,17 @@ def company_applications():
                     {score_display}
                 </td>
                 <td style="padding:15px; text-align:center;">
-                    {a['status']}
+                    <span style="background:#e0f2fe; color:#0369a1; padding:4px 8px; border-radius:12px; font-size:12px; font-weight:bold;">{a['status']}</span>
                 </td>
                 <td style="padding:15px; text-align:right;">
-                    <!-- ✅ NÚT XEM CV ĐÃ SỬA -->
                     <a href="/company/applications/{a['applicationId']}/cv"
-                       style="margin-right:10px;
-                              background:#2563eb;
-                              color:white;
-                              padding:6px 10px;
-                              border-radius:4px;
-                              text-decoration:none;">
-                        📄 Xem CV
+                       style="margin-right:5px; background:#2563eb; color:white; padding:6px 10px; border-radius:4px; text-decoration:none; font-size:13px;">
+                       <i class="fa-solid fa-eye"></i> Xem CV
                     </a>
 
                     <a href="/company/applications/{a['applicationId']}/evaluate"
-                       style="background:#0f172a;
-                              color:white;
-                              padding:6px 10px;
-                              border-radius:4px;
-                              text-decoration:none;">
-                        📝 Đánh giá
+                       style="background:#0f172a; color:white; padding:6px 10px; border-radius:4px; text-decoration:none; font-size:13px;">
+                       <i class="fa-solid fa-pen-to-square"></i> Đánh giá
                     </a>
                 </td>
             </tr>
@@ -967,8 +1152,6 @@ def company_evaluate_application(app_id):
 
     if request.method == 'POST':
         action = request.form.get('action')
-
-        # ===== FIX LỖI int("") =====
         skill_score_raw = request.form.get('skillScore')
         try:
             skill_score = int(skill_score_raw) if skill_score_raw else None
@@ -1045,10 +1228,13 @@ def company_view_applicants(job_id):
     except: apps = []
     content = f"<h2>📥 Ứng viên cho Job #{job_id}</h2>"
     for a in apps:
-        content += f"""<div class="job-card"><b>{a['studentName']}</b><br>Trạng thái: {a['status']}<br><a href="{a['cvUrl']}" target="_blank">📄 Xem CV</a></div>"""
+        content += f"""<div class="job-card"><b>{a['studentName']}</b><br>Trạng thái: {a['status']}<br><a href="/company/applications/{a['applicationId']}/cv">📄 Xem CV</a></div>"""
     return wrap_layout(content)
 
 
+# ==========================================
+# [QUAN TRỌNG] GIAO DIỆN XEM CV (ĐÃ FIX CSS)
+# ==========================================
 @app.route("/company/applications/<int:app_id>/cv")
 def company_view_cv(app_id):
     if 'user' not in session or session['user']['role'] != 'company':
@@ -1057,23 +1243,85 @@ def company_view_cv(app_id):
     res = requests.get(f"{API_URL}/companies/applications/{app_id}/cv")
 
     if res.status_code != 200:
-        return wrap_layout("<h3>❌ Không thể xem CV</h3>")
+        return wrap_layout("<h3>❌ Không thể tải thông tin hồ sơ</h3>")
 
     data = res.json()
 
+    # Xử lý hiển thị Kỹ năng
+    skills_html = ""
+    if data.get("skills") and isinstance(data["skills"], list):
+        for s in data["skills"]:
+            skills_html += f'<span class="badge-skill">{s["name"]} (Lv.{s["level"]})</span>'
+    else:
+        skills_html = '<span style="color:#999; font-style:italic;">Chưa cập nhật kỹ năng.</span>'
+
+    # Xử lý dữ liệu rỗng
+    dob = data.get("dob") if data.get("dob") else "Chưa cập nhật"
+    cccd = data.get("cccd") if data.get("cccd") else "Chưa cập nhật"
+    education = data.get("educationLevel") if data.get("educationLevel") else "Chưa cập nhật"
+    degrees = data.get("degrees") if data.get("degrees") else "Chưa cập nhật"
+    about = data.get("about") if data.get("about") else "Ứng viên chưa viết giới thiệu."
+    portfolio_url = data.get("portfolioUrl")
+
+    # Tạo giao diện HTML chi tiết (2 cột)
     content = f"""
-    <h2>📄 CV Ứng viên</h2>
+    <h2>📄 Chi tiết hồ sơ ứng viên</h2>
+    <a href="/company/applications">← Quay lại danh sách</a>
 
     <div class="job-card">
-        <p><b>👤 Họ tên:</b> {data['studentName']}</p>
-        <p><b>🎓 Ngành:</b> {data['major']}</p>
-        <p><b>💼 Vị trí ứng tuyển:</b> {data['jobTitle']}</p>
+        <div class="cv-container">
+            <div class="cv-left">
+                <img src="https://ui-avatars.com/api/?name={data.get('studentName', 'User')}&size=128&background=random&color=fff&rounded=true" 
+                     style="border-radius:50%; margin-bottom:15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" alt="Avatar">
+                
+                <h2 style="color:#1e40af; margin-bottom:5px;">{data.get('studentName', 'N/A')}</h2>
+                <p style="color:#64748b; font-weight:bold; margin-top:0;">{data.get('major', 'Chưa có ngành')}</p>
+                
+                <hr style="border:0; border-top:1px solid #e2e8f0; margin: 20px 0;">
+                
+                <p style="font-size:13px; color:#64748b;">Vị trí ứng tuyển</p>
+                <p style="font-weight:bold; color:#0f172a;">{data.get('jobTitle', 'N/A')}</p>
+                
+                <div style="margin-top:30px;">
+                    <a href="{data.get('cvUrl', '#')}" target="_blank">
+                        <button style="background:#dc2626; margin-bottom:10px;">
+                            <i class="fa-solid fa-file-pdf"></i> Xem CV Gốc (PDF)
+                        </button>
+                    </a>
+                    {f'<a href="{portfolio_url}" target="_blank"><button style="background:#334155;"><i class="fa-solid fa-globe"></i> Xem Portfolio</button></a>' if portfolio_url else ''}
+                </div>
+            </div>
 
-        <a href="{data['cvUrl']}" target="_blank">
-            <button style="margin-top:15px; background:#16a34a;">
-                📄 Mở CV (PDF / Drive)
-            </button>
-        </a>
+            <div class="cv-right">
+                <div class="section-title"><i class="fa-solid fa-user"></i> Thông tin cá nhân</div>
+                <div style="display:flex; gap:20px; margin-bottom:15px;">
+                    <div style="flex:1;"><strong>📅 Ngày sinh:</strong> {dob}</div>
+                    <div style="flex:1;"><strong>🆔 CCCD:</strong> {cccd}</div>
+                </div>
+
+                <div class="section-title"><i class="fa-solid fa-graduation-cap"></i> Học vấn & Bằng cấp</div>
+                <p><strong>🎓 Trình độ:</strong> {education}</p>
+                <p><strong>📜 Chứng chỉ:</strong> {degrees}</p>
+
+                <div class="section-title"><i class="fa-solid fa-star"></i> Kỹ năng chuyên môn</div>
+                <div style="margin-bottom:15px;">
+                    {skills_html}
+                </div>
+
+                <div class="section-title"><i class="fa-solid fa-quote-left"></i> Giới thiệu bản thân</div>
+                <div style="background:#f8fafc; padding:15px; border-radius:6px; font-style:italic; color:#475569; border-left:4px solid #cbd5e1;">
+                    "{about}"
+                </div>
+
+                <div style="margin-top:30px; text-align:right;">
+                     <a href="/company/applications/{app_id}/evaluate">
+                        <button style="width:auto; padding:10px 20px; background:#16a34a;">
+                            <i class="fa-solid fa-check-to-slot"></i> Đánh giá / Phỏng vấn
+                        </button>
+                     </a>
+                </div>
+            </div>
+        </div>
     </div>
     """
 
@@ -1272,4 +1520,7 @@ def admin_tests():
 # RUN APP
 # ======================
 if __name__ == '__main__':
+    # Tạo bảng Database nếu chưa có (Tự động fix lỗi thiếu bảng)
+    init_db() 
+    print("🚀 Server đang chạy tại: http://127.0.0.1:8001")
     app.run(debug=True, port=8001)
