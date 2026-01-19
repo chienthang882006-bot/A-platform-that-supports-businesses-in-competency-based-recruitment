@@ -1,6 +1,9 @@
 from flask import Flask
 from database import db_session, init_db
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
 # Import các API Routers (Backend)
 from routers.user_router import user_bp
 from routers.company_router import company_bp
@@ -13,7 +16,16 @@ from view.company_view import company_view_bp
 from view.admin_view import admin_view_bp
 
 app = Flask(__name__)
-app.secret_key = 'labodc_secret_key'
+app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY")
+
+if not app.config["SECRET_KEY"]:
+    raise RuntimeError("FLASK_SECRET_KEY chưa được cấu hình trong .env")
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=False  
+)
 
 # === ĐĂNG KÝ API ROUTERS (PREFIX /api) ===
 app.register_blueprint(user_bp, url_prefix='/api')
