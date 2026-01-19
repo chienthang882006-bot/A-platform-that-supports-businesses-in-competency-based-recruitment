@@ -20,7 +20,6 @@ class Job(Base):
     applications = relationship("Application", back_populates="job")
     maxApplicants = Column(Integer)  # ⭐ SỐ LƯỢNG TUYỂN TỐI ĐA
 
-
 class Skill(Base):
     __tablename__ = 'skills'
     id = Column(Integer, primary_key=True, index=True)
