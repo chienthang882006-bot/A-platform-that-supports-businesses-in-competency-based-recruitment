@@ -1,9 +1,33 @@
 from flask import Blueprint, request, session, redirect
+from markupsafe import escape
 import requests
 import json
+import secrets
 from utils import wrap_layout, API_URL
 
 company_view_bp = Blueprint('company_view', __name__)
+
+def generate_csrf_token():
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = secrets.token_hex(16)
+    return session["_csrf_token"]
+
+def validate_csrf(token):
+    return token and session.get("_csrf_token") == token
+
+def check_application_owner(app_id):
+    user_id = session["user"]["id"]
+
+    comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
+    if comp_res.status_code != 200:
+        return False
+
+    company_id = comp_res.json()["id"]
+    check = requests.get(
+        f"{API_URL}/companies/{company_id}/applications/{app_id}"
+    )
+    return check.status_code == 200
+
 
 @company_view_bp.route('/company/home')
 def company_home():
@@ -38,6 +62,13 @@ def company_home():
 
 @company_view_bp.route('/company/profile', methods=['GET', 'POST'])
 def company_profile():
+    
+    csrf_token = generate_csrf_token()
+    if request.method == 'POST':
+        if not validate_csrf(request.form.get("csrf_token")):
+            return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
+        session.pop("_csrf_token", None)
+
     if 'user' not in session or session['user']['role'] != 'company':
         return redirect('/login')
     
@@ -63,9 +94,9 @@ def company_profile():
                 if update_res.status_code == 200:
                     message = "<div style='background:#dcfce7; color:#166534; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bbf7d0; font-weight:bold;'>✅ Đã lưu hồ sơ thành công!</div>"
                 else:
-                    message = f"<div style='color:red; margin-bottom:15px;'>❌ Lỗi API: {update_res.text}</div>"
+                    message = f"<div style='color:red; margin-bottom:15px;'>Lỗi API: {update_res.text}</div>"
         except Exception as e:
-            message = f"<div style='color:red; margin-bottom:15px;'>❌ Lỗi kết nối: {e}</div>"
+            message = f"<div style='color:red; margin-bottom:15px;'>Lỗi kết nối: {e}</div>"
 
     company = {}
     try:
@@ -81,6 +112,7 @@ def company_profile():
     
     <div class="job-card">
         <form method="post">
+            <input type="hidden" name="csrf_token" value="{csrf_token}">
             <div style="display:flex; gap:30px;">
                 <div style="flex:1; text-align:center;">
                     <div style="border: 2px dashed #cbd5e1; border-radius: 12px; padding: 10px; margin-bottom: 15px;">
@@ -155,7 +187,7 @@ def company_jobs():
         jobs_res = requests.get(f"{API_URL}/companies/{company['id']}/jobs")
         my_jobs = jobs_res.json() if jobs_res.status_code == 200 else []
     except Exception as e:
-        return wrap_layout(f"<p>❌ Lỗi kết nối: {e}</p>")
+        return wrap_layout("Không thể xử lý yêu cầu. Vui lòng thử lại sau.")
     content += """
     <a href="/company/jobs/create" style="display:inline-block; margin:10px 0; padding:10px 14px; background:#16a34a; color:white; border-radius:6px; text-decoration:none; font-weight:bold;">
         ➕ Tạo Job mới
@@ -167,10 +199,10 @@ def company_jobs():
         content += f"""
         <div class="job-card">
             <div style="display:flex; justify-content:space-between;">
-                <h3>{j['title']}</h3>
+                <h3>{escape(j['title'])}</h3>
                 <span style="background:#e0f2fe; color:#0284c7; padding:4px 8px; border-radius:4px; font-size:12px; height:fit-content;">{j.get('status','OPEN')}</span>
             </div>
-            <p style="white-space: pre-line; color:#555;">{j['description'][:150]}...</p>
+            <p style="white-space: pre-line; color:#555;">{escape(j['description'][:150])}...</p>
             <p><b>Ứng viên:</b> {j.get('appliedCount', 0)} / {j.get('maxApplicants', '∞')}</p>        
             <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
                 <a href="/company/jobs/{j['id']}/edit" style="margin-right:15px; color:#f59e0b; font-weight:bold; text-decoration:none;">
@@ -186,6 +218,12 @@ def company_jobs():
 
 @company_view_bp.route('/company/jobs/create', methods=['GET', 'POST'])
 def company_create_job():
+    csrf_token = generate_csrf_token()
+    if request.method == 'POST':
+        if not validate_csrf(request.form.get("csrf_token")):
+            return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
+        session.pop("_csrf_token", None)
+
     if 'user' not in session or session['user']['role'] != 'company':
         return redirect('/login')
     message = ""
@@ -221,14 +259,15 @@ def company_create_job():
             if res.status_code in [200, 201]:
                 return redirect('/company/jobs') 
             else:
-                message = f"❌ Lỗi Backend: {res.text}"
+                message = "Không thể xử lý yêu cầu. Vui lòng thử lại sau."
         except Exception as e:
-            message = f"❌ Lỗi xử lý: {e}"
+            message = "Không thể xử lý yêu cầu. Vui lòng thử lại sau."
     
     return wrap_layout(f"""
     <h2>📄 Tạo tin tuyển dụng</h2>
     <p style="color:red; font-weight:bold;">{message}</p>
     <form method="post">
+        <input type="hidden" name="csrf_token" value="{csrf_token}">
         <div class="job-card">
             <h3>Thông tin công việc</h3>
             <label>Tiêu đề</label>
@@ -279,6 +318,12 @@ def company_create_job():
 
 @company_view_bp.route('/company/jobs/<int:job_id>/edit', methods=['GET', 'POST'])
 def company_edit_job(job_id):
+    csrf_token = generate_csrf_token()
+    if request.method == 'POST':
+        if not validate_csrf(request.form.get("csrf_token")):
+            return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
+        session.pop("_csrf_token", None)
+
     if 'user' not in session or session['user']['role'] != 'company':
         return redirect('/login')
     user_id = session['user']['id']
@@ -298,7 +343,7 @@ def company_edit_job(job_id):
              q_res = requests.get(f"{API_URL}/tests/{current_test['id']}")
              if q_res.status_code == 200: test_questions = q_res.json().get('questions', [])
     except Exception as e:
-        return wrap_layout(f"<h2>❌ Lỗi tải dữ liệu: {e}</h2>")
+        return wrap_layout(f"<h2>Lỗi tải dữ liệu: {e}</h2>")
     if request.method == 'POST':
         try:
             payload = {
@@ -321,9 +366,9 @@ def company_edit_job(job_id):
                 }
             res = requests.put(f"{API_URL}/jobs/{job_id}", json=payload)
             if res.status_code == 200: return redirect('/company/jobs')
-            else: message = f"❌ Lưu thất bại: {res.text}"
+            else: message = f"Lưu thất bại: {res.text}"
         except Exception as e:
-            message = f"❌ Lỗi xử lý: {e}"
+            message = "Không thể xử lý yêu cầu. Vui lòng thử lại sau."
 
     questions_json = json.dumps(test_questions) if current_test else "[]"
     has_test_checked = "checked" if current_test else ""
@@ -420,7 +465,7 @@ def company_applications():
             content += f"""
             <tr style="border-bottom:1px solid #eee;">
                 <td style="padding:15px;">
-                    <b>{a['studentName']}</b>
+                    <b>{escape(a['studentName'])}</b>
                 </td>
                 <td style="padding:15px;">
                     {a['jobTitle']}
@@ -451,6 +496,14 @@ def company_applications():
 
 @company_view_bp.route('/company/applications/<int:app_id>/evaluate', methods=['GET', 'POST'])
 def company_evaluate_application(app_id):
+    csrf_token = generate_csrf_token()
+    if request.method == 'POST':
+        if not validate_csrf(request.form.get("csrf_token")):
+            return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
+        session.pop("_csrf_token", None)
+    if not check_application_owner(app_id):
+        return wrap_layout("<h2>⛔ Bạn không có quyền truy cập hồ sơ này</h2>")
+
     if 'user' not in session or session['user']['role'] != 'company': return redirect('/login')
 
     if request.method == 'POST':
@@ -487,6 +540,7 @@ def company_evaluate_application(app_id):
         <div class="job-card" style="border-left:6px solid #8b5cf6;">
             <h3>🔍 Vòng 1: Sơ tuyển hồ sơ</h3>
             <form method="post">
+                <input type="hidden" name="csrf_token" value="{csrf_token}">
                 <div style="margin-bottom:20px;">
                     <label>Điểm hồ sơ</label><input type="number" name="skillScore">
                     <label>Nhận xét</label><textarea name="peerReview"></textarea>
@@ -513,6 +567,7 @@ def company_evaluate_application(app_id):
             <h3>🎤 Vòng 2: Đánh giá Phỏng vấn</h3>
             <p>Hồ sơ này đang trong quá trình phỏng vấn. Hãy nhập kết quả sau khi gặp ứng viên.</p>
             <form method="post">
+                <input type="hidden" name="csrf_token" value="{csrf_token}">
                 <label>Nhận xét buổi phỏng vấn (Interview Feedback)</label>
                 <textarea name="interviewFeedback" rows="5" required placeholder="Ứng viên trả lời thế nào? Thái độ ra sao?"></textarea>
                 
@@ -549,8 +604,12 @@ def company_view_applicants(job_id):
 
 @company_view_bp.route("/company/applications/<int:app_id>/cv")
 def company_view_cv(app_id):
+    
     if 'user' not in session or session['user']['role'] != 'company':
         return redirect('/login')
+    
+    if not check_application_owner(app_id):
+        return wrap_layout("<h2>⛔ Bạn không có quyền truy cập hồ sơ này</h2>")
 
     res = requests.get(f"{API_URL}/companies/applications/{app_id}/cv")
 
@@ -619,7 +678,7 @@ def company_view_cv(app_id):
 
                 <div class="section-title"><i class="fa-solid fa-quote-left"></i> Giới thiệu bản thân</div>
                 <div style="background:#f8fafc; padding:15px; border-radius:6px; font-style:italic; color:#475569; border-left:4px solid #cbd5e1;">
-                    "{about}"
+                    "{escape(about)}"
                 </div>
 
                 <div style="margin-top:30px; text-align:right;">

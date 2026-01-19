@@ -1,13 +1,23 @@
 from flask import Blueprint, request, session, redirect, url_for
 import requests
+import secrets
 from utils import wrap_layout, API_URL
 
 student_view_bp = Blueprint('student_view', __name__)
+
+def generate_csrf_token():
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = secrets.token_hex(16)
+    return session["_csrf_token"]
+
+def validate_csrf(token):
+    return token and session.get("_csrf_token") == token
 
 @student_view_bp.route("/student/home")
 def student_home():
     if "user" not in session or session["user"]["role"] != "student":
         return redirect("/login")
+    csrf_token = generate_csrf_token()
 
     message = session.pop("apply_message", "")
     jobs = []
@@ -71,6 +81,7 @@ def student_home():
                 <h3>{j.get('title','(No title)')}</h3>
                 <p>{j.get('description','')}</p>
                 <form method="post" action="/apply/{job_id}">
+                    <input type="hidden" name="csrf_token" value="{csrf_token}">
                     <button>✅ Ứng tuyển</button>
                 </form>
             </div>
@@ -80,6 +91,10 @@ def student_home():
 
 @student_view_bp.route("/apply/<int:job_id>", methods=["POST"])
 def apply(job_id):
+    if not validate_csrf(request.form.get("csrf_token")):
+        return "CSRF token không hợp lệ", 400
+    session.pop("_csrf_token", None)
+
     if 'user' not in session:
         return redirect('/login')
     user_id = session['user']['id']
@@ -102,18 +117,27 @@ def apply(job_id):
 
 @student_view_bp.route("/student/profile", methods=["GET", "POST"])
 def student_profile():
+    if request.method == "POST":
+        if not validate_csrf(request.form.get("csrf_token")):
+            return "CSRF token không hợp lệ", 400
+        session.pop("_csrf_token", None)
+
     if 'user' not in session:
         return redirect('/login')
+    
     user_id = session['user']['id']
     stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
+    
     if stu_res.status_code != 200:
-        return wrap_layout("<p>⚠️ Không tìm thấy hồ sơ sinh viên</p>")
+        return wrap_layout("<p>Không tìm thấy hồ sơ sinh viên</p>")
+    
     student = stu_res.json()
     student_id = student["id"]
     profile = student.get("profile") or {}
     skills = student.get("skills", [])
     skills_text = ", ".join([f"{s['name']}:{s['level']}" for s in skills])
     message = ""
+    
     if request.method == "POST":
         skills_raw = request.form.get("skills", "")
         skills_list = []
@@ -124,6 +148,7 @@ def student_profile():
                     "name": name.strip(),
                     "level": int(level.strip())
                 })
+                
         payload = {
             "fullName": request.form.get("fullName"),
             "major": request.form.get("major"),
@@ -134,6 +159,7 @@ def student_profile():
             "portfolioUrl": request.form.get("portfolioUrl"),
             "skills": skills_list
         }
+        
         res = requests.put(
             f"{API_URL}/students/{student_id}",
             json=payload
@@ -151,6 +177,7 @@ def student_profile():
     <h2>👤 Thông tin cá nhân</h2>
     {message}
     <form method="post">
+        <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
         <label>Họ tên</label>
         <input name="fullName" value="{student.get('fullName','')}">
         <label>Ngành học</label>
@@ -275,6 +302,7 @@ def student_tests(job_id):
 
 @student_view_bp.route("/student/test/<int:test_id>")
 def student_do_test(test_id):
+
     if 'user' not in session:
         return redirect('/login')
     user_id = session['user']['id']
@@ -312,9 +340,10 @@ def student_do_test(test_id):
         </div>
         """
     content = f"""
-    <h2>📝 {test.get('testName')} (Tự luận)</h2>
+    <h2>📝 {test.get('testName')}</h2>
     <p>⏱ Thời gian: {test.get('duration')} phút</p>
     <form method="post" action="/student/test/submit/{test_id}">
+        <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
         <input type="hidden" name="jobId" value="{job_to_start}">
         {questions_html}
         <button type="submit" style="margin-top:20px;">📤 Nộp bài test</button>
@@ -324,6 +353,10 @@ def student_do_test(test_id):
 
 @student_view_bp.route("/student/test/submit/<int:test_id>", methods=["POST"])
 def student_test_submit(test_id):
+    if not validate_csrf(request.form.get("csrf_token")):
+        return "CSRF token không hợp lệ", 400
+    session.pop("_csrf_token", None)
+
     if 'user' not in session:
         return redirect('/login')
     user_id = session['user']['id']

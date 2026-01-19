@@ -1,13 +1,25 @@
 from flask import Blueprint, session, redirect
 import requests
 from utils import wrap_layout, API_URL
+from markupsafe import escape
 
 admin_view_bp = Blueprint('admin_view', __name__)
 
-@admin_view_bp.route("/admin/home")
-def admin_home():
+def require_admin_view():
     if 'user' not in session or session['user']['role'] != 'admin':
         return redirect('/login')
+    return None
+
+def safe_api_request(method, url):
+    try:
+        return requests.request(method, url, timeout=3)
+    except requests.RequestException:
+        return None
+
+@admin_view_bp.route("/admin/home")
+def admin_home():
+    auth = require_admin_view()
+    if auth: return auth
 
     stats = {
         "users": 0, "students": 0, "companies": 0,
@@ -15,9 +27,10 @@ def admin_home():
     }
 
     try:
-        res = requests.get(f"{API_URL}/admin/home")
-        if res.status_code == 200:
+        res = safe_api_request("GET", f"{API_URL}/admin/home")
+        if res and res.status_code == 200:
             data = res.json()
+
             stats["users"] = data["users"]["total"]
             stats["students"] = data["users"]["students"]
             stats["companies"] = data["users"]["companies"]
@@ -51,27 +64,35 @@ def admin_home():
 
 @admin_view_bp.route("/admin/users")
 def admin_users():
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
+    auth = require_admin_view()
+    if auth: return auth
 
     users = []
     try:
-        users = requests.get(f"{API_URL}/admin/users").json()
+        res = safe_api_request("GET", f"{API_URL}/admin/users")
+        users = res.json() if res and res.status_code == 200 else []
     except:
         pass
 
     rows = ""
     for u in users:
-        action = (
-            f"<a href='/admin/users/{u['id']}/lock'>🔒 Lock</a>"
-            if u["status"] == "active"
-            else f"<a href='/admin/users/{u['id']}/unlock'>🔓 Unlock</a>"
-        )
+        if u["status"] == "active":
+            action = f"""
+            <form method="post" action="/admin/users/{u['id']}/lock" style="display:inline">
+                <button type="submit">🔒 Lock</button>
+            </form>
+            """
+        else:
+            action = f"""
+            <form method="post" action="/admin/users/{u['id']}/unlock" style="display:inline">
+                <button type="submit">🔓 Unlock</button>
+            </form>
+            """
 
         rows += f"""
         <tr>
             <td>{u['id']}</td>
-            <td>{u['email']}</td>
+            <td>{escape(u['email'])}</td>
             <td>{u['role']}</td>
             <td>{u['status']}</td>
             <td>{action}</td>
@@ -89,30 +110,31 @@ def admin_users():
     """
     return wrap_layout(content)
 
-@admin_view_bp.route("/admin/users/<int:user_id>/lock")
+@admin_view_bp.route("/admin/users/<int:user_id>/lock", methods=["POST"])
 def admin_lock_user(user_id):
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
+    auth = require_admin_view()
+    if auth: return auth
 
-    requests.put(f"{API_URL}/admin/users/{user_id}/lock")
+    safe_api_request("PUT", f"{API_URL}/admin/users/{user_id}/lock")
     return redirect("/admin/users")
 
-@admin_view_bp.route("/admin/users/<int:user_id>/unlock")
+@admin_view_bp.route("/admin/users/<int:user_id>/unlock", methods=["POST"])
 def admin_unlock_user(user_id):
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
+    auth = require_admin_view()
+    if auth: return auth
 
-    requests.put(f"{API_URL}/admin/users/{user_id}/unlock")
+    safe_api_request("PUT", f"{API_URL}/admin/users/{user_id}/unlock")
     return redirect("/admin/users")
 
 @admin_view_bp.route("/admin/jobs")
 def admin_jobs():
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
+    auth = require_admin_view()
+    if auth: return auth
 
     jobs = []
     try:
-        jobs = requests.get(f"{API_URL}/admin/jobs").json()
+        res = safe_api_request("GET", f"{API_URL}/admin/jobs")
+        jobs = res.json() if res and res.status_code == 200 else []
     except:
         pass
 
@@ -120,12 +142,17 @@ def admin_jobs():
     for j in jobs:
         action = ""
         if j["status"] != "CLOSED":
-            action = f"<a href='/admin/jobs/{j['id']}/close'>❌ Close</a>"
+            action = f"""
+            <form method="post" action="/admin/jobs/{j['id']}/close" style="display:inline">
+                <button type="submit">❌ Close</button>
+            </form>
+            """
+
 
         rows += f"""
         <tr>
             <td>{j['id']}</td>
-            <td>{j['title']}</td>
+            <td>{escape(j['title'])}</td>
             <td>{j['companyId']}</td>
             <td>{j['status']}</td>
             <td>{action}</td>
@@ -143,30 +170,33 @@ def admin_jobs():
     """
     return wrap_layout(content)
 
-@admin_view_bp.route("/admin/jobs/<int:job_id>/close")
+@admin_view_bp.route("/admin/jobs/<int:job_id>/close", methods=["POST"])
 def admin_close_job(job_id):
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
+    auth = require_admin_view()
+    if auth: return auth
 
-    requests.put(f"{API_URL}/admin/jobs/{job_id}/close")
+    safe_api_request("PUT", f"{API_URL}/admin/jobs/{job_id}/close")
     return redirect("/admin/jobs")
 
 @admin_view_bp.route("/admin/tests")
 def admin_tests():
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
+    auth = require_admin_view()
+    if auth: return auth
 
-    tests = requests.get(f"{API_URL}/admin/tests").json()
+    res = safe_api_request("GET", f"{API_URL}/admin/tests")
+    tests = res.json() if res and res.status_code == 200 else []
 
     rows = ""
     for t in tests:
         rows += f"""
         <tr>
             <td>{t['id']}</td>
-            <td>{t['testName']}</td>
+            <td>{escape(t['testName'])}</td>
             <td>{t['jobId']}</td>
             <td>
-                <a href="/admin/tests/{t['id']}/delete">🗑 Delete</a>
+                <form method="post" action="/admin/tests/{t['id']}/delete" style="display:inline">
+                    <button type="submit">🗑 Delete</button>
+                </form>
             </td>
         </tr>
         """
@@ -180,3 +210,11 @@ def admin_tests():
         {rows}
     </table>
     """)
+    
+@admin_view_bp.route("/admin/tests/<int:test_id>/delete", methods=["POST"])
+def admin_delete_test(test_id):
+    auth = require_admin_view()
+    if auth: return auth
+
+    safe_api_request("DELETE", f"{API_URL}/admin/tests/{test_id}")
+    return redirect("/admin/tests")
