@@ -23,7 +23,13 @@ scr/                                # Thư mục gốc chứa mã nguồn của 
 │   │   ├── user_models.py      
 │   │   ├── job_models.py       
 │   │   └── app_models.py       
-│   ├── main.py                     # Điểm khởi chạy ứng dụng Flask
+│   ├── main.py
+│   ├── views/                  # [MỚI] Chứa code trả về HTML (Giao diện)
+│   │    ├── auth_view.py        # Login, Register
+│   │    ├── student_view.py     # Màn hình sinh viên
+│   │    ├── company_view.py     # Màn hình công ty
+│   │    └── admin_view.py       # Màn hình admin
+│   ├── utils.py                    # Chứa hàm dùng chung (Layout, Notif, Config)
 │   ├── seed_data.py                # Tệp khởi tạo dữ liệu mẫu
 │   ├── app.py                      # Cấu hình ứng dụng
 │   ├── database.py                 # Quản lý Session và Engine
