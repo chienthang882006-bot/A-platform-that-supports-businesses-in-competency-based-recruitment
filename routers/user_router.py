@@ -1,17 +1,36 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, session
+from flask_bcrypt import Bcrypt
 from database import db_session
 from datetime import datetime
 # Import models
 from models.user_models import User, Student, Company, CompanyProfile, StudentProfile, UserRole
 from models.app_models import Notification 
 
+
+bcrypt = Bcrypt()
+
 user_bp = Blueprint('user_router', __name__)
+
+def require_login():
+    if "user" not in session:
+        return jsonify({"detail": "Unauthorized"}), 401
+    return None
+
+def require_admin():
+    if "user" not in session or session["user"]["role"] != "admin":
+        return jsonify({"detail": "Forbidden"}), 403
+    return None
+
+
 
 # =========================
 # GET ALL USERS (ADMIN)
 # =========================
 @user_bp.route("/users/", methods=["GET"])
 def get_users():
+    auth = require_admin()
+    if auth: return auth
+
     users = db_session.query(User).all()
     return jsonify([{
         "id": u.id,
@@ -48,7 +67,7 @@ def create_user():
         # 2. Tạo User (Truyền Enum Object vào)
         new_user = User(
             email=email,
-            password=password, 
+            password=bcrypt.generate_password_hash(password).decode("utf-8"), 
             role=role_enum, # <--- Đã sửa: Truyền object Enum, không truyền string
             status="active"
         )
@@ -112,35 +131,38 @@ def login():
     email = data.get("email")
     password = data.get("password")
 
-    # 1. Tìm user
     user = db_session.query(User).filter(User.email == email).first()
 
-    # 2. Nếu KHÔNG tìm thấy user
-    if not user:
+    if not user or not bcrypt.check_password_hash(user.password, password):
         return jsonify({"detail": "Sai tài khoản hoặc mật khẩu"}), 401
 
-    # 3. Kiểm tra mật khẩu
-    if user.password != password:
-        return jsonify({"detail": "Sai tài khoản hoặc mật khẩu"}), 401
-
-    # 4. Kiểm tra status an toàn
-    current_status = getattr(user, "status", "active")
-    if current_status != "active":
+    if getattr(user, "status", "active") != "active":
         return jsonify({"detail": "Tài khoản đã bị khóa"}), 403
-            
-    # 5. Đăng nhập thành công
+
+    session["user"] = {
+        "id": user.id,
+        "email": user.email,
+        "role": user.role.value
+    }
+
     return jsonify({
         "id": user.id,
         "email": user.email,
-        "role": user.role.value # Trả về string (vd: "student")
+        "role": user.role.value
     }), 200
+
 
 # =========================
 # GET NOTIFICATIONS
 # =========================
 @user_bp.route("/notifications/<int:user_id>", methods=["GET"])
 def get_notifications(user_id):
-    """Lấy danh sách thông báo của user"""
+    auth = require_login()
+    if auth: return auth
+
+    if session["user"]["id"] != user_id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     notifications = db_session.query(Notification).filter(
         Notification.userId == user_id
     ).order_by(Notification.createdAt.desc()).all()
@@ -158,9 +180,15 @@ def get_notifications(user_id):
 # =========================
 @user_bp.route("/notifications/read/<int:notif_id>", methods=["PUT"])
 def mark_as_read(notif_id):
+    auth = require_login()
+    if auth: return auth
+
     notif = db_session.query(Notification).filter(Notification.id == notif_id).first()
     if not notif:
         return jsonify({"detail": "Không tìm thấy thông báo"}), 404
+
+    if notif.userId != session["user"]["id"]:
+        return jsonify({"detail": "Forbidden"}), 403
 
     notif.isRead = True
     db_session.commit()

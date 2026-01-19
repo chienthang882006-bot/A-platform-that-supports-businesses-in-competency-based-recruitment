@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, session
+
 from sqlalchemy import func
 
 # Database & Models
@@ -10,6 +11,8 @@ from models.user_models import Company, Student, CompanyProfile
 from models.app_models import Application, ApplicationStatus, Evaluation, TestResult, Interview, Notification, InterviewFeedback
 
 company_bp = Blueprint("company_router", __name__)
+
+
 
 # =========================
 # HELPER FUNCTIONS
@@ -33,12 +36,27 @@ def get_student_cv_url(student):
         return student.profile.cvUrl
     return None
 
+def require_company():
+    if "user" not in session or session["user"]["role"] != "company":
+        return jsonify({"detail": "Unauthorized"}), 401
+    return None
+
+def get_current_company():
+    return db_session.query(Company).filter(
+        Company.userId == session["user"]["id"]
+    ).first()
+
 # =========================
 # COMPANY & PROFILE ROUTES
 # =========================
 
 @company_bp.route("/companies/user/<int:user_id>", methods=["GET"])
 def get_company_by_user(user_id):
+    if require_company(): return require_company()
+
+    if session["user"]["id"] != user_id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     company = db_session.query(Company).filter(Company.userId == user_id).first()
     if not company:
         return jsonify({"detail": "Company not found"}), 404
@@ -46,6 +64,11 @@ def get_company_by_user(user_id):
 
 @company_bp.route("/companies/user/<int:user_id>/profile", methods=["GET"])
 def get_company_profile(user_id):
+    if require_company(): return require_company()
+
+    if session["user"]["id"] != user_id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     company = db_session.query(Company).filter(Company.userId == user_id).first()
     if not company:
         return jsonify({"detail": "Company not found"}), 404
@@ -65,6 +88,12 @@ def get_company_profile(user_id):
 
 @company_bp.route("/companies/<int:company_id>/profile", methods=["PUT"])
 def update_company_profile(company_id):
+    if require_company(): return require_company()
+
+    company = get_current_company()
+    if not company or company.id != company_id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     data = request.json
     try:
         company = db_session.query(Company).filter(Company.id == company_id).first()
@@ -100,6 +129,12 @@ def update_company_profile(company_id):
 
 @company_bp.route("/companies/<int:company_id>/jobs", methods=["GET"])
 def get_jobs_by_company(company_id):
+    if require_company(): return require_company()
+
+    company = get_current_company()
+    if company.id != company_id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     """Lấy danh sách việc làm và đếm số lượng ứng tuyển."""
     jobs = db_session.query(Job).filter(Job.companyId == company_id).all()
     response = []
@@ -121,9 +156,17 @@ def get_jobs_by_company(company_id):
 
 @company_bp.route("/jobs/<int:job_id>", methods=["GET"])
 def get_job_detail(job_id):
+    if require_company(): return require_company()
+
     job = db_session.query(Job).filter(Job.id == job_id).first()
+    company = get_current_company()
+
     if not job:
         return jsonify({"detail": "Job not found"}), 404
+
+    if job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     return jsonify({
         "id": job.id,
         "companyId": job.companyId,
@@ -158,7 +201,15 @@ def get_all_open_jobs():
 
 @company_bp.route("/jobs/", methods=["POST"])
 def create_job():
+    if require_company(): return require_company()
+
+    company = get_current_company()
+    if not company:
+        return jsonify({"detail": "Company not found"}), 404
+
     data = request.json
+    data["companyId"] = company.id  # 🔒 override
+
     try:
         # 1. Tạo Job
         new_job = Job(
@@ -204,13 +255,17 @@ def create_job():
 
 @company_bp.route("/jobs/<int:job_id>", methods=["PUT"])
 def update_job(job_id):
+    if require_company(): return require_company()
+
+    job = db_session.query(Job).filter(Job.id == job_id).first()
+    company = get_current_company()
+
+    if not job or job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     data = request.get_json(silent=True) or request.form
     if not data:
         return jsonify({"detail": "No data provided"}), 400
-
-    job = db_session.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        return jsonify({"detail": "Job not found"}), 404
 
     try:
         # 1. Update Basic Info
@@ -270,6 +325,14 @@ def update_job(job_id):
 
 @company_bp.route("/jobs/<int:job_id>/test", methods=["POST"])
 def create_skill_test(job_id):
+    if require_company(): return require_company()
+
+    job = db_session.query(Job).filter(Job.id == job_id).first()
+    company = get_current_company()
+
+    if not job or job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     data = request.json
     try:
         test = SkillTest(
@@ -298,6 +361,14 @@ def create_skill_test(job_id):
 
 @company_bp.route("/jobs/<int:job_id>/test-results", methods=["GET"])
 def view_test_results(job_id):
+    if require_company(): return require_company()
+
+    job = db_session.query(Job).filter(Job.id == job_id).first()
+    company = get_current_company()
+
+    if not job or job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     results = db_session.query(TestResult, Student, SkillTest)\
         .join(SkillTest, TestResult.testId == SkillTest.id)\
         .join(Student, TestResult.studentId == Student.id)\
@@ -317,6 +388,12 @@ def view_test_results(job_id):
 
 @company_bp.route("/companies/<int:company_id>/applications", methods=["GET"])
 def get_all_applications_for_company(company_id):
+    if require_company(): return require_company()
+
+    company = get_current_company()
+    if company.id != company_id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     """Dashboard: Xem toàn bộ đơn ứng tuyển của công ty."""
     apps = db_session.query(Application).join(Job).filter(Job.companyId == company_id).all()
     response = []
@@ -345,6 +422,14 @@ def get_all_applications_for_company(company_id):
 
 @company_bp.route("/jobs/<int:job_id>/applications", methods=["GET"])
 def get_applications_by_job(job_id):
+    if require_company(): return require_company()
+
+    job = db_session.query(Job).filter(Job.id == job_id).first()
+    company = get_current_company()
+
+    if not job or job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     apps = db_session.query(Application).filter(Application.jobId == job_id).all()
     return jsonify([{
         "applicationId": app.id,
@@ -355,7 +440,14 @@ def get_applications_by_job(job_id):
 
 @company_bp.route("/applications/<int:app_id>/test-detail", methods=["GET"])
 def get_application_test_detail(app_id):
+    if require_company(): return require_company()
+
     app = db_session.query(Application).filter(Application.id == app_id).first()
+    company = get_current_company()
+
+    if not app or app.job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     if not app: return jsonify({"detail": "App not found"}), 404
 
     # Lấy bài test đầu tiên của job
@@ -393,7 +485,14 @@ def get_application_test_detail(app_id):
 
 @company_bp.route("/companies/applications/<int:app_id>/cv", methods=["GET"])
 def company_view_candidate_cv(app_id):
+    if require_company(): return require_company()
+
     app = db_session.query(Application).filter(Application.id == app_id).first()
+    company = get_current_company()
+
+    if not app or app.job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     if not app: return jsonify({"detail": "Application not found"}), 404
 
     student = app.student
@@ -423,6 +522,14 @@ def company_view_candidate_cv(app_id):
 
 @company_bp.route("/applications/<int:app_id>/evaluate", methods=["POST"])
 def evaluate_application(app_id):
+    if require_company(): return require_company()
+
+    app = db_session.query(Application).filter(Application.id == app_id).first()
+    company = get_current_company()
+
+    if not app or app.job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     data = request.json
     try:
         app = db_session.query(Application).filter(Application.id == app_id).first()

@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, session
 from database import db_session
 from models.user_models import User, UserRole
 from models.job_models import Job
@@ -6,8 +6,19 @@ from models.app_models import Application
 
 admin_bp = Blueprint("admin_router", __name__)
 
+def require_admin():
+    if "user" not in session:
+        return jsonify({"detail": "Unauthorized"}), 401
+    if session["user"]["role"] != "admin":
+        return jsonify({"detail": "Forbidden"}), 403
+    return None
+
+
 @admin_bp.route("/admin/home", methods=["GET"])
 def admin_home():
+    auth = require_admin()
+    if auth: return auth
+
     students = db_session.query(User).filter(
         User.role == UserRole.STUDENT.value
     ).count()
@@ -33,6 +44,9 @@ def admin_home():
 
 @admin_bp.route("/admin/users", methods=["GET"])
 def admin_get_users():
+    auth = require_admin()
+    if auth: return auth
+
     users = db_session.query(User).all()
     return jsonify([{
         "id": u.id,
@@ -45,16 +59,27 @@ def admin_get_users():
 
 @admin_bp.route("/admin/users/<int:user_id>/lock", methods=["PUT"])
 def lock_user(user_id):
+    auth = require_admin()
+    if auth: return auth
+
     user = db_session.query(User).get(user_id)
     if not user:
         return jsonify({"detail": "User not found"}), 404
+
+    if user.id == session["user"]["id"]:
+        return jsonify({"detail": "Cannot lock yourself"}), 400
+
     user.status = "locked"
     db_session.commit()
     return jsonify({"message": "User locked"})
 
 
+
 @admin_bp.route("/admin/users/<int:user_id>/unlock", methods=["PUT"])
 def unlock_user(user_id):
+    auth = require_admin()
+    if auth: return auth
+
     user = db_session.query(User).get(user_id)
     if not user:
         return jsonify({"detail": "User not found"}), 404
@@ -65,6 +90,9 @@ def unlock_user(user_id):
 
 @admin_bp.route("/admin/jobs", methods=["GET"])
 def admin_get_jobs():
+    auth = require_admin()
+    if auth: return auth
+    
     jobs = db_session.query(Job).all()
     return jsonify([{
         "id": j.id,
@@ -77,6 +105,9 @@ def admin_get_jobs():
 
 @admin_bp.route("/admin/jobs/<int:job_id>/close", methods=["PUT"])
 def admin_close_job(job_id):
+    auth = require_admin()
+    if auth: return auth
+    
     job = db_session.query(Job).get(job_id)
     if not job:
         return jsonify({"detail": "Job not found"}), 404
@@ -87,6 +118,9 @@ def admin_close_job(job_id):
 
 @admin_bp.route("/admin/jobs/<int:job_id>/applications", methods=["GET"])
 def admin_view_applications(job_id):
+    auth = require_admin()
+    if auth: return auth
+    
     apps = db_session.query(Application).filter(Application.jobId == job_id).all()
     return jsonify([{
         "applicationId": a.id,

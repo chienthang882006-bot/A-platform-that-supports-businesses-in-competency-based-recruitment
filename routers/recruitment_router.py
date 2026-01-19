@@ -1,14 +1,27 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, session
 from database import db_session
 from models import Job, Application, Student, Company, ApplicationStatus, TestResult, SkillTest
 
 
 recruitment_bp = Blueprint('recruitment_router', __name__)
 
+def require_student():
+    if "user" not in session:
+        return jsonify({"detail": "Unauthorized"}), 401
+    if session["user"]["role"] != "student":
+        return jsonify({"detail": "Forbidden"}), 403
+    return None
+
+def get_current_student_id():
+    return session["user"]["id"]
 
 @recruitment_bp.route("/jobs/", methods=["GET"])
 def get_all_jobs():
-    student_id = request.args.get("studentId", type=int)
+    auth = require_student()
+    if auth: return auth
+
+    student_id = session["user"]["id"]
+
     # lấy job chưa CLOSED
     jobs = db_session.query(Job).filter(Job.status != "CLOSED").all()
 
@@ -47,9 +60,11 @@ def get_all_jobs():
 
 @recruitment_bp.route("/apply/", methods=["POST"])
 def apply_job():
-    data = request.json
-    student_id = data["studentId"]
-    job_id = data["jobId"]
+    auth = require_student()
+    if auth: return auth
+
+    student_id = session["user"]["id"]
+    job_id = request.json.get("jobId")
 
     job = db_session.query(Job).filter(Job.id == job_id).first()
     if not job:
@@ -105,10 +120,14 @@ def apply_job():
     }), 201
 
 
-
-
 @recruitment_bp.route("/students/<int:student_id>/applications", methods=["GET"])
 def get_student_applications(student_id):
+    auth = require_student()
+    if auth: return auth
+
+    if session["user"]["id"] != student_id:
+        return jsonify({"detail": "Forbidden"}), 403
+
     apps = db_session.query(Application).filter(
         Application.studentId == student_id
     ).all()
@@ -123,9 +142,12 @@ def get_student_applications(student_id):
 
 @recruitment_bp.route("/tests/start", methods=["POST"])
 def start_test():
-    data = request.json
-    student_id = data["studentId"]
-    job_id = data["jobId"]
+    auth = require_student()
+    if auth: return auth
+
+    student_id = session["user"]["id"]
+    job_id = request.json.get("jobId")
+
     # 1. Lấy bài test của job
     job = db_session.query(Job).filter(Job.id == job_id).first()
     if not job or not job.skill_tests:
@@ -157,11 +179,14 @@ def start_test():
 
 @recruitment_bp.route("/tests/<int:test_id>/submit", methods=["POST"])
 def submit_test(test_id):
+    auth = require_student()
+    if auth: return auth
+
+    student_id = session["user"]["id"]
+
     data = request.json or {}
-    student_id = data.get("studentId")
     score = data.get("score", 0)
-    if not student_id:
-        return jsonify({"detail": "studentId required"}), 400
+    
     # 1) kiểm tra TestResult đã tồn tại (student đã start test)
     tr = db_session.query(TestResult).filter(
         TestResult.studentId == student_id,
