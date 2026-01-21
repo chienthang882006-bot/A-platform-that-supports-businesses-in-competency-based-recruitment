@@ -1,31 +1,52 @@
-from flask import Blueprint, request, session, redirect, url_for
+from flask import Blueprint, request, redirect, make_response, current_app
+from dotenv import load_dotenv
 import requests
 import secrets
+import jwt
+import os
 from utils import wrap_layout, API_URL
+
+load_dotenv()
 
 student_view_bp = Blueprint('student_view', __name__)
 
-def generate_csrf_token():
-    if "_csrf_token" not in session:
-        session["_csrf_token"] = secrets.token_hex(16)
-    return session["_csrf_token"]
+JWT_SECRET = os.getenv("JWT_SECRET_KEY")
+JWT_ALGO = "HS256"
 
-def validate_csrf(token):
-    return token and session.get("_csrf_token") == token
+def require_student_view():
+    token = request.cookies.get("access_token")
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        if payload.get("role") != "student":
+            return None
+        return payload
+    except jwt.InvalidTokenError:
+        return None
+
+def generate_csrf_token():
+    return secrets.token_hex(16)
+
+def validate_csrf(form_token):
+    cookie_token = request.cookies.get("csrf_token")
+    return cookie_token and form_token and cookie_token == form_token
+
 
 @student_view_bp.route("/student/home")
 def student_home():
-    if "user" not in session or session["user"]["role"] != "student":
+    user = require_student_view()
+    if not user:
         return redirect("/login")
-    csrf_token = generate_csrf_token()
 
-    message = session.pop("apply_message", "")
+    csrf_token = generate_csrf_token()
+    message = request.args.get("msg", "")
     jobs = []
     applied_job_ids = []
     done_test_ids = []
 
     try:
-        user_id = session['user']['id']
+        user_id = user["sub"]
         stu_res = requests.get(f"{API_URL}/students/user/{user_id}", timeout=5)
         if stu_res.status_code != 200:
             return wrap_layout("<p>⚠️ Không tìm thấy hồ sơ sinh viên</p>")
@@ -86,18 +107,27 @@ def student_home():
                 </form>
             </div>
             """
+    resp = make_response(wrap_layout(content))
+    resp.set_cookie(
+        "csrf_token",
+        csrf_token,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure
+    )
+    return resp
 
-    return wrap_layout(content)
 
 @student_view_bp.route("/apply/<int:job_id>", methods=["POST"])
 def apply(job_id):
     if not validate_csrf(request.form.get("csrf_token")):
         return "CSRF token không hợp lệ", 400
-    session.pop("_csrf_token", None)
 
-    if 'user' not in session:
+    user = require_student_view()
+    if not user:
         return redirect('/login')
-    user_id = session['user']['id']
+
+    user_id = user["sub"]
     stu = requests.get(f"{API_URL}/students/user/{user_id}").json()
     student_id = stu["id"]
     res = requests.post(
@@ -107,25 +137,29 @@ def apply(job_id):
     if res.status_code == 201:
         data = res.json()
         if data.get("status") == "NEED_TEST":
-            session["current_job_id"] = job_id
             return redirect(f"/student/test/{data['testId']}")
+
         if data.get("status") == "APPLIED":
-            session["apply_message"] = "✅ Ứng tuyển thành công"
-            return redirect("/student/home")
-    session["apply_message"] = "❌ Không thể ứng tuyển"
+            return redirect("/student/home?msg=✅+Ứng+tuyển+thành+công")
+
+        return redirect("/student/home?msg=❌+Không+thể+ứng+tuyển")
+
     return redirect("/student/home")
 
 @student_view_bp.route("/student/profile", methods=["GET", "POST"])
 def student_profile():
+    
+    csrf_token = generate_csrf_token()
+
     if request.method == "POST":
         if not validate_csrf(request.form.get("csrf_token")):
             return "CSRF token không hợp lệ", 400
-        session.pop("_csrf_token", None)
 
-    if 'user' not in session:
+    user = require_student_view()
+    if not user:
         return redirect('/login')
-    
-    user_id = session['user']['id']
+
+    user_id = user["sub"]
     stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
     
     if stu_res.status_code != 200:
@@ -177,7 +211,7 @@ def student_profile():
     <h2>👤 Thông tin cá nhân</h2>
     {message}
     <form method="post">
-        <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
+        <input type="hidden" name="csrf_token" value="{csrf_token}">
         <label>Họ tên</label>
         <input name="fullName" value="{student.get('fullName','')}">
         <label>Ngành học</label>
@@ -197,13 +231,25 @@ def student_profile():
         <button>💾 Lưu hồ sơ</button>
     </form>
     """
-    return wrap_layout(content)
+    
+    resp = make_response(wrap_layout(content))
+    resp.set_cookie(
+        "csrf_token",
+        csrf_token,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure
+    )
+    return resp
+
 
 @student_view_bp.route('/student/applications')
 def student_applications():
-    if 'user' not in session: return redirect('/login')
-    
-    user_id = session['user']['id']
+    user = require_student_view()
+    if not user:
+        return redirect('/login')
+
+    user_id = user["sub"]
     try:
         # 1. Lấy thông tin sinh viên
         stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
@@ -285,10 +331,12 @@ def student_applications():
 
 @student_view_bp.route("/student/tests/<int:job_id>")
 def student_tests(job_id):
-    if 'user' not in session or session['user']['role'] != 'student':
+        
+    user = require_student_view()
+    if not user:
         return redirect('/login')
-    session["current_job_id"] = job_id
-    user_id = session['user']['id']
+    
+    user_id = user["sub"]
     stu = requests.get(f"{API_URL}/students/user/{user_id}").json()
     student_id = stu["id"]
     start_res = requests.post(
@@ -303,22 +351,26 @@ def student_tests(job_id):
 @student_view_bp.route("/student/test/<int:test_id>")
 def student_do_test(test_id):
 
-    if 'user' not in session:
+    user = require_student_view()
+    if not user:
         return redirect('/login')
-    user_id = session['user']['id']
+
+    user_id = user["sub"]
+
     stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
     if stu_res.status_code != 200:
         return wrap_layout("<p>❌ Không tìm thấy sinh viên</p>")
+    
     student_id = stu_res.json()["id"]
     res = requests.get(f"{API_URL}/tests/{test_id}")
+    
     if res.status_code != 200:
         return wrap_layout("<p>❌ Không tìm thấy bài test</p>")
+    
     test = res.json()
     job_id = test.get("jobId")
-    if not session.get("current_job_id") and job_id:
-        session["current_job_id"] = job_id
+    job_to_start = test.get("jobId")
 
-    job_to_start = session.get("current_job_id") or job_id
     if not job_to_start:
         return wrap_layout("<p>❌ Bài test chưa liên kết với job</p>")
     start_res = requests.post(
@@ -353,59 +405,70 @@ def student_do_test(test_id):
 
 @student_view_bp.route("/student/test/submit/<int:test_id>", methods=["POST"])
 def student_test_submit(test_id):
+    # 1. CSRF
     if not validate_csrf(request.form.get("csrf_token")):
         return "CSRF token không hợp lệ", 400
-    session.pop("_csrf_token", None)
 
-    if 'user' not in session:
+    # 2. Auth bằng JWT (không session)
+    user = require_student_view()
+    if not user:
         return redirect('/login')
-    user_id = session['user']['id']
+
+    user_id = user["sub"]
+
+    # 3. Lấy studentId
     stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
     if stu_res.status_code != 200:
-        session["apply_message"] = "❌ Lỗi: không tìm thấy sinh viên"
-        return redirect("/student/home")
+        return redirect("/student/home?msg=❌+Không+tìm+thấy+sinh+viên")
+
     student_id = stu_res.json()["id"]
+
+    # 4. Submit bài test
     answers = dict(request.form)
     submit_payload = {
         "studentId": student_id,
-        "score": 0,        
+        "score": 0,
         "answers": answers
     }
-    submit_res = requests.post(f"{API_URL}/tests/{test_id}/submit", json=submit_payload)
+
+    submit_res = requests.post(
+        f"{API_URL}/tests/{test_id}/submit",
+        json=submit_payload
+    )
+
     if submit_res.status_code not in (200, 201):
         try:
             msg = submit_res.json().get("detail") or submit_res.text
         except:
             msg = submit_res.text
-        session["apply_message"] = f"❌ Lỗi nộp bài: {msg}"
-        return redirect("/student/home")
-    job_id = session.pop("current_job_id", None) or request.form.get("jobId")
+        return redirect(f"/student/home?msg=❌+Lỗi+nộp+bài:+{msg}")
+
+    # 5. Apply job (jobId lấy từ form, KHÔNG session)
+    job_id = request.form.get("jobId")
     if job_id:
         try:
             apply_res = requests.post(
                 f"{API_URL}/apply/",
                 json={"studentId": student_id, "jobId": int(job_id)}
             )
+
             if apply_res.status_code in (200, 201):
-                data = {}
                 try:
                     data = apply_res.json()
                 except:
                     data = {}
+
                 if data.get("status") in ("ALREADY_APPLIED", "APPLIED"):
-                    session["apply_message"] = "✅ Hoàn thành bài test & đã ứng tuyển"
+                    return redirect("/student/home?msg=✅+Hoàn+thành+bài+test+và+đã+ứng+tuyển")
                 elif data.get("status") == "NEED_TEST":
-                    session["apply_message"] = "✅ Hoàn thành bài test, hồ sơ đang chờ xét duyệt"
+                    return redirect("/student/home?msg=✅+Hoàn+thành+bài+test,+đang+chờ+xét+duyệt")
                 else:
-                    session["apply_message"] = "✅ Hoàn thành bài test"
+                    return redirect("/student/home?msg=✅+Hoàn+thành+bài+test")
             else:
-                try:
-                    err = apply_res.json().get("detail") or apply_res.text
-                except:
-                    err = apply_res.text
-                session["apply_message"] = f"✅ Hoàn thành bài test — nhưng apply lỗi: {err}"
-        except Exception as e:
-            session["apply_message"] = f"✅ Hoàn thành bài test — nhưng apply thất bại: {e}"
-    else:
-        session["apply_message"] = "✅ Hoàn thành bài test"
-    return redirect("/student/home")
+                return redirect("/student/home?msg=⚠️+Hoàn+thành+bài+test+nhưng+apply+lỗi")
+
+        except Exception:
+            return redirect("/student/home?msg=⚠️+Hoàn+thành+bài+test+nhưng+apply+thất+bại")
+
+    # 6. Không có jobId
+    return redirect("/student/home?msg=✅+Hoàn+thành+bài+test")

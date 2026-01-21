@@ -1,26 +1,30 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 from database import db_session
-from models import Job, Application, Student, Company, ApplicationStatus, TestResult, SkillTest
+from models import Job, Application, Student, Company, ApplicationStatus, TestResult, SkillTest, UserRole
 
 
 recruitment_bp = Blueprint('recruitment_router', __name__)
 
 def require_student():
-    if "user" not in session:
-        return jsonify({"detail": "Unauthorized"}), 401
-    if session["user"]["role"] != "student":
+    claims = get_jwt()
+    
+    if claims.get("role") != UserRole.STUDENT.value:
         return jsonify({"detail": "Forbidden"}), 403
     return None
 
 def get_current_student_id():
-    return session["user"]["id"]
+    return get_jwt_identity()
+
 
 @recruitment_bp.route("/jobs/", methods=["GET"])
+@jwt_required()
 def get_all_jobs():
     auth = require_student()
-    if auth: return auth
+    if auth:
+        return auth
 
-    student_id = session["user"]["id"]
+    student_id = get_jwt_identity()
 
     # lấy job chưa CLOSED
     jobs = db_session.query(Job).filter(Job.status != "CLOSED").all()
@@ -59,11 +63,13 @@ def get_all_jobs():
 
 
 @recruitment_bp.route("/apply/", methods=["POST"])
+@jwt_required()
 def apply_job():
     auth = require_student()
-    if auth: return auth
+    if auth:
+        return auth
 
-    student_id = session["user"]["id"]
+    student_id = get_jwt_identity()
     job_id = request.json.get("jobId")
 
     job = db_session.query(Job).filter(Job.id == job_id).first()
@@ -121,11 +127,14 @@ def apply_job():
 
 
 @recruitment_bp.route("/students/<int:student_id>/applications", methods=["GET"])
+@jwt_required()
 def get_student_applications(student_id):
     auth = require_student()
-    if auth: return auth
+    if auth:
+        return auth
 
-    if session["user"]["id"] != student_id:
+
+    if get_jwt_identity() != student_id:
         return jsonify({"detail": "Forbidden"}), 403
 
     apps = db_session.query(Application).filter(
@@ -141,11 +150,13 @@ def get_student_applications(student_id):
 
 
 @recruitment_bp.route("/tests/start", methods=["POST"])
+@jwt_required()
 def start_test():
     auth = require_student()
-    if auth: return auth
+    if auth:
+        return auth
 
-    student_id = session["user"]["id"]
+    student_id = get_jwt_identity()
     job_id = request.json.get("jobId")
 
     # 1. Lấy bài test của job
@@ -178,11 +189,13 @@ def start_test():
 
 
 @recruitment_bp.route("/tests/<int:test_id>/submit", methods=["POST"])
+@jwt_required()
 def submit_test(test_id):
     auth = require_student()
-    if auth: return auth
+    if auth:
+        return auth
 
-    student_id = session["user"]["id"]
+    student_id = get_jwt_identity()
 
     data = request.json or {}
     score = data.get("score", 0)

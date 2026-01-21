@@ -1,22 +1,20 @@
 import json
 from datetime import datetime
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 
 from sqlalchemy import func
 
 # Database & Models
 from database import db_session
 from models.job_models import Job, SkillTest, Question, JobSkill, Skill
-from models.user_models import Company, Student, CompanyProfile
+from models.user_models import Company, Student, CompanyProfile, UserRole
 from models.app_models import Application, ApplicationStatus, Evaluation, TestResult, Interview, Notification, InterviewFeedback
 
 company_bp = Blueprint("company_router", __name__)
 
 
-
-# =========================
 # HELPER FUNCTIONS
-# =========================
 def safe_int(value, default=0):
     """Chuyển đổi an toàn sang int."""
     try:
@@ -37,24 +35,26 @@ def get_student_cv_url(student):
     return None
 
 def require_company():
-    if "user" not in session or session["user"]["role"] != "company":
-        return jsonify({"detail": "Unauthorized"}), 401
+    claims = get_jwt()
+    if claims.get("role") != UserRole.COMPANY.value:
+        return jsonify({"detail": "Forbidden"}), 403
     return None
 
 def get_current_company():
+    user_id = get_jwt_identity()
     return db_session.query(Company).filter(
-        Company.userId == session["user"]["id"]
+        Company.userId == user_id
     ).first()
 
-# =========================
+
 # COMPANY & PROFILE ROUTES
-# =========================
-
 @company_bp.route("/companies/user/<int:user_id>", methods=["GET"])
+@jwt_required()
 def get_company_by_user(user_id):
-    if require_company(): return require_company()
+    auth = require_company()
+    if auth: return auth
 
-    if session["user"]["id"] != user_id:
+    if get_jwt_identity() != user_id:
         return jsonify({"detail": "Forbidden"}), 403
 
     company = db_session.query(Company).filter(Company.userId == user_id).first()
@@ -63,10 +63,12 @@ def get_company_by_user(user_id):
     return jsonify({"id": company.id, "companyName": company.companyName})
 
 @company_bp.route("/companies/user/<int:user_id>/profile", methods=["GET"])
+@jwt_required()
 def get_company_profile(user_id):
-    if require_company(): return require_company()
+    auth = require_company()
+    if auth: return auth
 
-    if session["user"]["id"] != user_id:
+    if get_jwt_identity() != user_id:
         return jsonify({"detail": "Forbidden"}), 403
 
     company = db_session.query(Company).filter(Company.userId == user_id).first()
@@ -87,9 +89,11 @@ def get_company_profile(user_id):
     })
 
 @company_bp.route("/companies/<int:company_id>/profile", methods=["PUT"])
+@jwt_required()
 def update_company_profile(company_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     company = get_current_company()
     if not company or company.id != company_id:
         return jsonify({"detail": "Forbidden"}), 403
@@ -123,13 +127,12 @@ def update_company_profile(company_id):
         print(f"Update profile error: {e}")
         return jsonify({"detail": f"Lỗi server: {str(e)}"}), 500
 
-# =========================
 # JOB MANAGEMENT ROUTES
-# =========================
-
 @company_bp.route("/companies/<int:company_id>/jobs", methods=["GET"])
+@jwt_required()
 def get_jobs_by_company(company_id):
-    if require_company(): return require_company()
+    auth = require_company()
+    if auth: return auth
 
     company = get_current_company()
     if company.id != company_id:
@@ -155,9 +158,11 @@ def get_jobs_by_company(company_id):
     return jsonify(response)
 
 @company_bp.route("/jobs/<int:job_id>", methods=["GET"])
+@jwt_required()
 def get_job_detail(job_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     job = db_session.query(Job).filter(Job.id == job_id).first()
     company = get_current_company()
 
@@ -200,9 +205,11 @@ def get_all_open_jobs():
     return jsonify(response)
 
 @company_bp.route("/jobs/", methods=["POST"])
+@jwt_required()
 def create_job():
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     company = get_current_company()
     if not company:
         return jsonify({"detail": "Company not found"}), 404
@@ -254,9 +261,11 @@ def create_job():
         return jsonify({"detail": f"Lỗi khi tạo job: {str(e)}"}), 500
 
 @company_bp.route("/jobs/<int:job_id>", methods=["PUT"])
+@jwt_required()
 def update_job(job_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     job = db_session.query(Job).filter(Job.id == job_id).first()
     company = get_current_company()
 
@@ -319,14 +328,13 @@ def update_job(job_id):
         print(f"Update job error: {e}")
         return jsonify({"detail": f"Lỗi cập nhật: {str(e)}"}), 500
 
-# =========================
 # TEST MANAGEMENT
-# =========================
-
 @company_bp.route("/jobs/<int:job_id>/test", methods=["POST"])
+@jwt_required()
 def create_skill_test(job_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     job = db_session.query(Job).filter(Job.id == job_id).first()
     company = get_current_company()
 
@@ -360,9 +368,11 @@ def create_skill_test(job_id):
         return jsonify({"detail": f"Lỗi tạo bài test: {str(e)}"}), 500
 
 @company_bp.route("/jobs/<int:job_id>/test-results", methods=["GET"])
+@jwt_required()
 def view_test_results(job_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     job = db_session.query(Job).filter(Job.id == job_id).first()
     company = get_current_company()
 
@@ -382,14 +392,14 @@ def view_test_results(job_id):
         "submittedAt": r.submittedAt
     } for r, s, t in results])
 
-# =========================
 # APPLICATION & EVALUATION
-# =========================
 
 @company_bp.route("/companies/<int:company_id>/applications", methods=["GET"])
+@jwt_required()
 def get_all_applications_for_company(company_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     company = get_current_company()
     if company.id != company_id:
         return jsonify({"detail": "Forbidden"}), 403
@@ -421,9 +431,11 @@ def get_all_applications_for_company(company_id):
     return jsonify(response)
 
 @company_bp.route("/jobs/<int:job_id>/applications", methods=["GET"])
+@jwt_required()
 def get_applications_by_job(job_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     job = db_session.query(Job).filter(Job.id == job_id).first()
     company = get_current_company()
 
@@ -439,9 +451,11 @@ def get_applications_by_job(job_id):
     } for app in apps])
 
 @company_bp.route("/applications/<int:app_id>/test-detail", methods=["GET"])
+@jwt_required()
 def get_application_test_detail(app_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     app = db_session.query(Application).filter(Application.id == app_id).first()
     company = get_current_company()
 
@@ -484,9 +498,11 @@ def get_application_test_detail(app_id):
     })
 
 @company_bp.route("/companies/applications/<int:app_id>/cv", methods=["GET"])
+@jwt_required()
 def company_view_candidate_cv(app_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     app = db_session.query(Application).filter(Application.id == app_id).first()
     company = get_current_company()
 
@@ -521,9 +537,11 @@ def company_view_candidate_cv(app_id):
     })
 
 @company_bp.route("/applications/<int:app_id>/evaluate", methods=["POST"])
+@jwt_required()
 def evaluate_application(app_id):
-    if require_company(): return require_company()
-
+    auth = require_company()
+    if auth: return auth
+    
     app = db_session.query(Application).filter(Application.id == app_id).first()
     company = get_current_company()
 

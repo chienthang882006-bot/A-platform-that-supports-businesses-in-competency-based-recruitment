@@ -1,20 +1,54 @@
-from flask import Blueprint, session, redirect
+from flask import Blueprint, request, redirect
+from dotenv import load_dotenv
+import jwt
 import requests
+import os
 from utils import wrap_layout, API_URL
 from markupsafe import escape
 
+load_dotenv()
+
 admin_view_bp = Blueprint('admin_view', __name__)
 
+JWT_SECRET = os.getenv("JWT_SECRET_KEY")
+JWT_ALGO = "HS256"
+
 def require_admin_view():
-    if 'user' not in session or session['user']['role'] != 'admin':
-        return redirect('/login')
+    token = request.cookies.get("access_token")
+    if not token:
+        return redirect("/login")
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        if payload.get("role") != "admin":
+            return redirect("/login")
+    except jwt.ExpiredSignatureError:
+        return redirect("/login")
+    except jwt.InvalidTokenError:
+        return redirect("/login")
+
     return None
 
+
 def safe_api_request(method, url):
+    token = request.cookies.get("access_token")
+    headers = {}
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     try:
-        return requests.request(method, url, timeout=3)
+        res = requests.request(
+            method,
+            url,
+            headers=headers,
+            timeout=3
+        )
+        return res
     except requests.RequestException:
         return None
+
+
 
 @admin_view_bp.route("/admin/home")
 def admin_home():

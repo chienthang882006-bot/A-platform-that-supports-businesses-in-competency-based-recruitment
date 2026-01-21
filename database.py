@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 
-DATABASE_URL = "sqlite:///./RecruitmentApp.db"
+DATABASE_URL = "sqlite:///./A-platform-that-supports-businesses-in-competency-based-recruitment/RecruitmentApp.db"
 
 engine = create_engine(DATABASE_URL, echo=True)
 # Sử dụng scoped_session để đảm bảo an toàn luồng trong Flask

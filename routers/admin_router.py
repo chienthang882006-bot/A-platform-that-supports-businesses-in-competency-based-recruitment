@@ -1,4 +1,6 @@
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify
+from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
+
 from database import db_session
 from models.user_models import User, UserRole
 from models.job_models import Job
@@ -6,30 +8,34 @@ from models.app_models import Application
 
 admin_bp = Blueprint("admin_router", __name__)
 
+
+# CHECK ROLE ADMIN (JWT)
 def require_admin():
-    if "user" not in session:
-        return jsonify({"detail": "Unauthorized"}), 401
-    if session["user"]["role"] != "admin":
+    claims = get_jwt()
+    if claims.get("role") != UserRole.ADMIN.value:
         return jsonify({"detail": "Forbidden"}), 403
     return None
 
 
+# ADMIN DASHBOARD
 @admin_bp.route("/admin/home", methods=["GET"])
+@jwt_required()  # yêu cầu JWT hợp lệ
 def admin_home():
     auth = require_admin()
-    if auth: return auth
+    if auth:
+        return auth
 
     students = db_session.query(User).filter(
-        User.role == UserRole.STUDENT.value
+        User.role == UserRole.STUDENT
     ).count()
 
     companies = db_session.query(User).filter(
-        User.role == UserRole.COMPANY.value
+        User.role == UserRole.COMPANY
     ).count()
 
     return jsonify({
         "users": {
-            "total": students + companies,   # ✅ KHÔNG tính admin
+            "total": students + companies,  # không tính admin
             "students": students,
             "companies": companies
         },
@@ -42,10 +48,13 @@ def admin_home():
     })
 
 
+# GET ALL USERS
 @admin_bp.route("/admin/users", methods=["GET"])
+@jwt_required()
 def admin_get_users():
     auth = require_admin()
-    if auth: return auth
+    if auth:
+        return auth
 
     users = db_session.query(User).all()
     return jsonify([{
@@ -57,16 +66,20 @@ def admin_get_users():
     } for u in users])
 
 
+# LOCK USER
 @admin_bp.route("/admin/users/<int:user_id>/lock", methods=["PUT"])
+@jwt_required()
 def lock_user(user_id):
     auth = require_admin()
-    if auth: return auth
+    if auth:
+        return auth
 
     user = db_session.query(User).get(user_id)
     if not user:
         return jsonify({"detail": "User not found"}), 404
 
-    if user.id == session["user"]["id"]:
+    # không cho admin tự khóa chính mình
+    if user.id == get_jwt_identity():
         return jsonify({"detail": "Cannot lock yourself"}), 400
 
     user.status = "locked"
@@ -74,25 +87,31 @@ def lock_user(user_id):
     return jsonify({"message": "User locked"})
 
 
-
+# UNLOCK USER
 @admin_bp.route("/admin/users/<int:user_id>/unlock", methods=["PUT"])
+@jwt_required()
 def unlock_user(user_id):
     auth = require_admin()
-    if auth: return auth
+    if auth:
+        return auth
 
     user = db_session.query(User).get(user_id)
     if not user:
         return jsonify({"detail": "User not found"}), 404
+
     user.status = "active"
     db_session.commit()
     return jsonify({"message": "User unlocked"})
 
 
+# GET ALL JOBS
 @admin_bp.route("/admin/jobs", methods=["GET"])
+@jwt_required()
 def admin_get_jobs():
     auth = require_admin()
-    if auth: return auth
-    
+    if auth:
+        return auth
+
     jobs = db_session.query(Job).all()
     return jsonify([{
         "id": j.id,
@@ -103,25 +122,35 @@ def admin_get_jobs():
     } for j in jobs])
 
 
+# CLOSE JOB
 @admin_bp.route("/admin/jobs/<int:job_id>/close", methods=["PUT"])
+@jwt_required()
 def admin_close_job(job_id):
     auth = require_admin()
-    if auth: return auth
-    
+    if auth:
+        return auth
+
     job = db_session.query(Job).get(job_id)
     if not job:
         return jsonify({"detail": "Job not found"}), 404
+
     job.status = "CLOSED"
     db_session.commit()
     return jsonify({"message": "Job closed"})
 
 
+# VIEW JOB APPLICATIONS
 @admin_bp.route("/admin/jobs/<int:job_id>/applications", methods=["GET"])
+@jwt_required()
 def admin_view_applications(job_id):
     auth = require_admin()
-    if auth: return auth
-    
-    apps = db_session.query(Application).filter(Application.jobId == job_id).all()
+    if auth:
+        return auth
+
+    apps = db_session.query(Application).filter(
+        Application.jobId == job_id
+    ).all()
+
     return jsonify([{
         "applicationId": a.id,
         "studentId": a.studentId,

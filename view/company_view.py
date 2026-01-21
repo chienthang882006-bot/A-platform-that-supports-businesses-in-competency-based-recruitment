@@ -1,22 +1,43 @@
-from flask import Blueprint, request, session, redirect
+from flask import Blueprint, request, redirect, make_response
 from markupsafe import escape
+from dotenv import load_dotenv
 import requests
 import json
 import secrets
+import jwt
+import os
 from utils import wrap_layout, API_URL
+
+load_dotenv()
 
 company_view_bp = Blueprint('company_view', __name__)
 
-def generate_csrf_token():
-    if "_csrf_token" not in session:
-        session["_csrf_token"] = secrets.token_hex(16)
-    return session["_csrf_token"]
+JWT_SECRET = os.getenv("JWT_SECRET_KEY")
+JWT_ALGO = "HS256"
 
-def validate_csrf(token):
-    return token and session.get("_csrf_token") == token
+def require_company_view():
+    token = request.cookies.get("access_token")
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        if payload.get("role") != "company":
+            return None
+        return payload  # chứa user_id
+    except jwt.InvalidTokenError:
+        return None
+
+def validate_csrf(form_token):
+    cookie_token = request.cookies.get("csrf_token")
+    return cookie_token and form_token and cookie_token == form_token
 
 def check_application_owner(app_id):
-    user_id = session["user"]["id"]
+    user = require_company_view()
+    if not user:
+        return False
+
+    user_id = user["sub"]
 
     comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
     if comp_res.status_code != 200:
@@ -31,12 +52,14 @@ def check_application_owner(app_id):
 
 @company_view_bp.route('/company/home')
 def company_home():
-    if 'user' not in session or session['user']['role'] != 'company':
+    user = require_company_view()
+    if not user:
         return redirect('/login')
-    
+
     content = f"""
     <h2>🏢 Dashboard Doanh nghiệp</h2>
-    <p>Xin chào <b>{session['user']['email']}</b></p>
+    <p>Xin chào <b>Doanh nghiệp</b></p>
+
     
     <div style="display:flex; gap:15px; flex-wrap:wrap;">
         <div class="job-card" style="flex:1; min-width:300px; border-left:5px solid #16a34a;">
@@ -58,21 +81,28 @@ def company_home():
         </div>
     </div>
     """
-    return wrap_layout(content)
+    resp = make_response(wrap_layout(content))
+    return resp
+
 
 @company_view_bp.route('/company/profile', methods=['GET', 'POST'])
 def company_profile():
     
-    csrf_token = generate_csrf_token()
+    if request.method == "GET":
+        csrf_token = secrets.token_hex(16)
+    else:
+        csrf_token = request.cookies.get("csrf_token")
+
     if request.method == 'POST':
         if not validate_csrf(request.form.get("csrf_token")):
             return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
-        session.pop("_csrf_token", None)
 
-    if 'user' not in session or session['user']['role'] != 'company':
+    user = require_company_view()
+    if not user:
         return redirect('/login')
+
+    user_id = user["sub"]   
     
-    user_id = session['user']['id']
     message = ""
 
     if request.method == 'POST':
@@ -171,13 +201,25 @@ def company_profile():
         </form>
     </div>
     """
-    return wrap_layout(content)
+    resp = make_response(wrap_layout(content))
+    resp.set_cookie(
+        "csrf_token",
+        csrf_token,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure
+    )
+    return resp
+
 
 @company_view_bp.route('/company/jobs')
 def company_jobs():
-    if 'user' not in session or session['user']['role'] != 'company':
+    user = require_company_view()
+    if not user:
         return redirect('/login')
-    user_id = session['user']['id']
+
+    user_id = user["sub"]   
+
     content = "<h2>📄 Tin tuyển dụng của công ty</h2>"
     try:
         comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
@@ -214,22 +256,32 @@ def company_jobs():
             </div>
         </div>
         """
-    return wrap_layout(content)
+    resp = make_response(wrap_layout(content))
+    return resp
+
 
 @company_view_bp.route('/company/jobs/create', methods=['GET', 'POST'])
 def company_create_job():
-    csrf_token = generate_csrf_token()
+
+    if request.method == "GET":
+        csrf_token = secrets.token_hex(16)
+    else:
+        csrf_token = request.cookies.get("csrf_token")
+
     if request.method == 'POST':
         if not validate_csrf(request.form.get("csrf_token")):
             return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
-        session.pop("_csrf_token", None)
 
-    if 'user' not in session or session['user']['role'] != 'company':
+    user = require_company_view()
+    if not user:
         return redirect('/login')
+
+    user_id = user["sub"]   
+
     message = ""
     if request.method == 'POST':
         try:
-            comp_res = requests.get(f"{API_URL}/companies/user/{session['user']['id']}")
+            comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
             company = comp_res.json()
             payload = {
                 "companyId": company['id'],
@@ -263,7 +315,7 @@ def company_create_job():
         except Exception as e:
             message = "Không thể xử lý yêu cầu. Vui lòng thử lại sau."
     
-    return wrap_layout(f"""
+    html = f"""
     <h2>📄 Tạo tin tuyển dụng</h2>
     <p style="color:red; font-weight:bold;">{message}</p>
     <form method="post">
@@ -314,19 +366,36 @@ def company_create_job():
             document.getElementById("questions-container").appendChild(div);
         }}
     </script>
-    """)
+    """
+    resp = make_response(wrap_layout(html))
+    resp.set_cookie(
+        "csrf_token",
+        csrf_token,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure
+    )
+    return resp
+
 
 @company_view_bp.route('/company/jobs/<int:job_id>/edit', methods=['GET', 'POST'])
 def company_edit_job(job_id):
-    csrf_token = generate_csrf_token()
+
+    if request.method == "GET":
+        csrf_token = secrets.token_hex(16)
+    else:
+        csrf_token = request.cookies.get("csrf_token")
+
     if request.method == 'POST':
         if not validate_csrf(request.form.get("csrf_token")):
             return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
-        session.pop("_csrf_token", None)
 
-    if 'user' not in session or session['user']['role'] != 'company':
+    user = require_company_view()
+    if not user:
         return redirect('/login')
-    user_id = session['user']['id']
+
+    user_id = user["sub"]   
+
     message = ""    
     try:
         comp = requests.get(f"{API_URL}/companies/user/{user_id}").json()
@@ -374,7 +443,7 @@ def company_edit_job(job_id):
     has_test_checked = "checked" if current_test else ""
     display_test_form = "block" if current_test else "none"
 
-    return wrap_layout(f"""
+    html = f"""
     <h2>✏️ Chỉnh sửa tin tuyển dụng</h2>
     <p style="color:red">{message}</p>
     <a href="/company/jobs">← Quay lại danh sách</a>
@@ -424,15 +493,28 @@ def company_edit_job(job_id):
             else if (document.getElementById("chkTest").checked) {{ addQuestionInput(); }}
         }};
     </script>
-    """)
+    """
+    resp = make_response(wrap_layout(html))
+    resp.set_cookie(
+        "csrf_token",
+        csrf_token,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure
+    )
+    return resp
+
 
 @company_view_bp.route('/company/applications')
 def company_applications():
-    if 'user' not in session or session['user']['role'] != 'company':
+    user = require_company_view()
+    if not user:
         return redirect('/login')
 
+    user_id = user["sub"]   
+
     try:
-        user_id = session['user']['id']
+        user_id = user["sub"]
         comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
         company = comp_res.json()
         apps_res = requests.get(f"{API_URL}/companies/{company['id']}/applications")
@@ -492,19 +574,28 @@ def company_applications():
 
         content += "</tbody></table>"
 
-    return wrap_layout(content)
+    resp = make_response(wrap_layout(content))
+    return resp
+
 
 @company_view_bp.route('/company/applications/<int:app_id>/evaluate', methods=['GET', 'POST'])
 def company_evaluate_application(app_id):
-    csrf_token = generate_csrf_token()
+
+    if request.method == "GET":
+        csrf_token = secrets.token_hex(16)
+    else:
+        csrf_token = request.cookies.get("csrf_token")
+
     if request.method == 'POST':
         if not validate_csrf(request.form.get("csrf_token")):
             return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
-        session.pop("_csrf_token", None)
-    if not check_application_owner(app_id):
-        return wrap_layout("<h2>⛔ Bạn không có quyền truy cập hồ sơ này</h2>")
 
-    if 'user' not in session or session['user']['role'] != 'company': return redirect('/login')
+    if not check_application_owner(app_id):
+        return wrap_layout("<h2>Bạn không có quyền truy cập hồ sơ này</h2>")
+
+    user = require_company_view()
+    if not user:
+        return redirect('/login')
 
     if request.method == 'POST':
         payload = {
@@ -518,9 +609,18 @@ def company_evaluate_application(app_id):
             "interviewFeedback": request.form.get('interviewFeedback'),
             "interviewRating": request.form.get('interviewRating')
         }
-        requests.post(f"{API_URL}/applications/{app_id}/evaluate", json=payload)
-        return redirect('/company/applications')
+        headers = {
+            "Authorization": f"Bearer {request.cookies.get('access_token')}"
+        }
 
+        requests.post(
+            f"{API_URL}/applications/{app_id}/evaluate",
+            json=payload,
+            headers=headers
+        )
+
+        return redirect('/company/applications')
+    
     res = requests.get(f"{API_URL}/applications/{app_id}/test-detail")
     if res.status_code != 200: return wrap_layout("Lỗi tải dữ liệu")
     data = res.json()
@@ -590,23 +690,43 @@ def company_evaluate_application(app_id):
     else:
         form_html = f"<div class='job-card'><h3>🏁 Hồ sơ đã đóng</h3><p>Trạng thái hiện tại: <b>{status.upper()}</b></p></div>"
 
-    return wrap_layout(f"<h2>⚖️ Quy trình tuyển dụng</h2>{test_html}{form_html}")
+    html = f"<h2>⚖️ Quy trình tuyển dụng</h2>{test_html}{form_html}"
+
+    resp = make_response(wrap_layout(html))
+    resp.set_cookie(
+        "csrf_token",
+        csrf_token,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure
+    )
+    return resp
+    
 
 @company_view_bp.route('/company/jobs/<int:job_id>/applications')
 def company_view_applicants(job_id):
-    if 'user' not in session or session['user']['role'] != 'company': return redirect('/login')
+    user = require_company_view()
+    if not user:
+        return redirect('/login')
+
     try: apps = requests.get(f"{API_URL}/jobs/{job_id}/applications").json()
     except: apps = []
     content = f"<h2>📥 Ứng viên cho Job #{job_id}</h2>"
     for a in apps:
         content += f"""<div class="job-card"><b>{a['studentName']}</b><br>Trạng thái: {a['status']}<br><a href="/company/applications/{a['applicationId']}/cv">📄 Xem CV</a></div>"""
-    return wrap_layout(content)
+    resp = make_response(wrap_layout(content))
+    return resp
+
 
 @company_view_bp.route("/company/applications/<int:app_id>/cv")
 def company_view_cv(app_id):
     
-    if 'user' not in session or session['user']['role'] != 'company':
+    user = require_company_view()
+    if not user:
         return redirect('/login')
+
+    user_id = user["sub"]   
+
     
     if not check_application_owner(app_id):
         return wrap_layout("<h2>⛔ Bạn không có quyền truy cập hồ sơ này</h2>")

@@ -1,51 +1,17 @@
-from flask import Blueprint, request, session, redirect
+from flask import Blueprint, request, redirect, make_response
+from flask_wtf.csrf import generate_csrf
 from markupsafe import escape
 import requests
-import secrets
 import re
 from utils import wrap_layout, API_URL
-from datetime import datetime, timedelta
 
 auth_bp = Blueprint('auth_view', __name__)
 
 def get_client_ip():
     return request.headers.get("X-Forwarded-For", request.remote_addr)
 
-def generate_csrf_token():
-    if "_csrf_token" not in session:
-        session["_csrf_token"] = secrets.token_hex(16)
-    return session["_csrf_token"]
-
-
-def validate_csrf(token):
-    return token and session.get("_csrf_token") == token
-
-MAX_LOGIN_ATTEMPTS = 5
-LOCK_TIME_MINUTES = 5
-
-def is_login_locked():
-    locked_until = session.get("login_locked_until")
-    if not locked_until:
-        return False
-    return datetime.utcnow() < locked_until
-
-def register_failed_login():
-    ip = get_client_ip()
-    key = f"login_fail_{ip}"
-
-    count = session.get(key, 0) + 1
-    session[key] = count
-
-    if count >= MAX_LOGIN_ATTEMPTS:
-        session["login_locked_until"] = datetime.utcnow() + timedelta(minutes=LOCK_TIME_MINUTES)
-
-def reset_login_attempts():
-    ip = get_client_ip()
-    session.pop(f"login_fail_{ip}", None)
-    session.pop("login_locked_until", None)
-
 def is_strong_password(password: str) -> bool:
-    if len(password) < 8:
+    if len(password) < 6:
         return False
     if not re.search(r"[A-Z]", password):
         return False
@@ -56,11 +22,12 @@ def is_strong_password(password: str) -> bool:
     if not re.search(r"[!@#$%^&*()_+=\-]", password):
         return False
     return True
-    
+
 
 @auth_bp.route('/')
 def index():
     return redirect('/auth')
+
 
 @auth_bp.route('/auth')
 def auth():
@@ -73,19 +40,15 @@ def auth():
     </div>
     """)
 
+
 @auth_bp.route('/register', methods=['GET', 'POST'])
 def register():
+    
+    csrf_token = generate_csrf()
+    
     message = ""
 
-    session.pop("_csrf_token", None)
-    csrf_token = generate_csrf_token()
-
     if request.method == 'POST':
-        if not validate_csrf(request.form.get("csrf_token")):
-            return "CSRF token không hợp lệ", 400
-
-        session.pop("_csrf_token", None)
-
         role = request.form.get("role")
         if role not in ["student", "company"]:
             role = "student"
@@ -98,10 +61,9 @@ def register():
 
         elif not is_strong_password(password):
             message = (
-                "Mật khẩu phải từ 8 ký tự, gồm chữ hoa, chữ thường, số "
+                "Mật khẩu phải từ 6 ký tự, gồm chữ hoa, chữ thường, số "
                 "và ký tự đặc biệt"
             )
-
         else:
             try:
                 res = requests.post(
@@ -120,13 +82,13 @@ def register():
                     message = res.json().get("detail", "Lỗi đăng ký")
 
             except requests.exceptions.RequestException:
-                message = "❌ Không kết nối được backend"
+                message = "Không kết nối được backend"
 
     return wrap_layout(f"""
     <h2>📝 Đăng ký</h2>
     <p>{escape(message)}</p>
     <form method="post">
-        <input type="hidden" name="csrf_token" value="{csrf_token}">
+        <input type="hidden" name="csrf_token" value="{ csrf_token }">
         <input name="email" placeholder="Email" required>
         <input name="password" type="password" placeholder="Mật khẩu" required>
         <select name="role">
@@ -140,59 +102,59 @@ def register():
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
+
+    csrf_token = generate_csrf()
     message = ""
-    session.pop("_csrf_token", None)
-    csrf_token = generate_csrf_token()
 
     if request.method == 'POST':
+        email = request.form.get("email", "")[:100]
+        password = request.form.get("password", "")[:128]
 
-        if not validate_csrf(request.form.get("csrf_token")):
-            return "CSRF token không hợp lệ", 400
-
-        session.pop("_csrf_token", None)
-
-        if is_login_locked():
-            message = "Quá nhiều lần đăng nhập sai. Vui lòng thử lại sau 5 phút."
+        if not email or not password:
+            message = "Vui lòng nhập đầy đủ thông tin"
         else:
-            email = request.form.get("email", "")[:100]
-            password = request.form.get("password", "")[:128]
+            try:
+                res = requests.post(
+                    f"{API_URL}/login/",
+                    json={"email": email, "password": password},
+                    timeout=5
+                )
 
-            if not email or not password:
-                message = "Vui lòng nhập đầy đủ thông tin"
-            else:
-                try:
-                    res = requests.post(
-                        f"{API_URL}/login/",
-                        json={"email": email, "password": password},
-                        timeout=5
-                    )
+                if res.status_code == 200:
+                    try:
+                        data = res.json()
+                        token = data.get("access_token")
+                        user = data.get("user", {})
+                        role = user.get("role")
 
-                    if res.status_code == 200:
-                        user = res.json()
+                        if not token or not role:
+                            message = "Lỗi dữ liệu đăng nhập"
+                        else:
+                            resp = make_response(
+                                redirect(f"/{role}/home")
+                            )
+                            resp.set_cookie(
+                                "access_token",
+                                token,
+                                httponly=True,
+                                samesite="Lax",
+                                secure=request.is_secure
+                            )
+                            return resp
 
-                        reset_login_attempts()
-                        session.clear()
-                        session.modified = True
+                    except Exception as e:
+                        message = f"Lỗi xử lý login: {e}"
 
-                        session["user"] = {
-                            "id": user["id"],
-                            "email": user["email"],
-                            "role": user["role"]
-                        }
-
-                        if user["role"] == "student":
-                            return redirect("/student/home")
-                        elif user["role"] == "company":
-                            return redirect("/company/home")
-                        elif user["role"] == "admin":
-                            return redirect("/admin/home")
-
-                    else:
-                        register_failed_login()
+                else:
+                    try:
+                        message = res.json().get(
+                            "detail", "Sai tài khoản hoặc mật khẩu"
+                        )
+                    except Exception:
                         message = "Sai tài khoản hoặc mật khẩu"
 
-                except requests.exceptions.RequestException:
-                    message = "Không kết nối được backend"
+            except requests.exceptions.RequestException as e:
+                message = f"Lỗi backend: {e}"
 
     return wrap_layout(f"""
     <h2>🔑 Đăng nhập</h2>
@@ -208,6 +170,7 @@ def login():
 
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
-    session.clear()
-    session.modified = True
-    return redirect('/auth')
+    resp = make_response(redirect('/auth'), 302)
+    resp.delete_cookie("access_token")
+    return resp
+
