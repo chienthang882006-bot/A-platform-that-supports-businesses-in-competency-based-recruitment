@@ -1,39 +1,46 @@
 # utils.py
 from flask import request
-from dotenv import load_dotenv
 import jwt
 import os
 import requests
 
 
-load_dotenv()
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 
 def get_current_user_from_jwt():
-    token = request.cookies.get("access_token")
-    if not token:
-        return None
+    # 1. Ưu tiên header (API call)
+    auth = request.headers.get("Authorization")
+
+    # 2. Nếu không có → lấy từ cookie UI
+    if not auth:
+        token = request.cookies.get("ui_access_token")
+        if not token:
+            return None
+        auth = f"Bearer {token}"
+
     try:
         payload = jwt.decode(
-            token,
+            auth.replace("Bearer ", ""),
             JWT_SECRET_KEY,
             algorithms=["HS256"],
             options={"verify_sub": False}
         )
         return {
-            "id": payload.get("sub"),
+            "id": int(payload.get("sub")),
             "role": payload.get("role")
         }
     except jwt.InvalidTokenError:
         return None
 
+
 def auth_headers():
-    token = request.cookies.get("access_token")
+    token = request.cookies.get("ui_access_token")
     if not token:
         return {}
     return {
         "Authorization": f"Bearer {token}"
     }
+
 
 # CẤU HÌNH API URL
 API_URL = "http://127.0.0.1:8001/api"
@@ -44,7 +51,11 @@ def show_notifications():
         return ""
     
     try:
-        res = requests.get(f"{API_URL}/notifications/{user['id']}")
+        res = requests.get(
+            f"{API_URL}/notifications/{user['id']}",
+            headers=auth_headers(),
+            timeout=5
+        )
         count = 0
         list_html = ""
 

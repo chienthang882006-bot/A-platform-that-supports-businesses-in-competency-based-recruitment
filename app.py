@@ -42,6 +42,12 @@ app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY")
 if not app.config["JWT_SECRET_KEY"]:
     raise RuntimeError("❌ JWT_SECRET_KEY chưa được cấu hình trong .env")
 
+# 🔥 BẮT BUỘC PHẢI CÓ
+app.config["JWT_TOKEN_LOCATION"] = ["headers"]
+app.config["JWT_HEADER_NAME"] = "Authorization"
+app.config["JWT_HEADER_TYPE"] = "Bearer"
+
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -76,12 +82,22 @@ login_manager.login_message = "Vui lòng đăng nhập để tiếp tục"
 app.register_blueprint(user_bp, url_prefix="/api")
 app.register_blueprint(company_bp, url_prefix="/api")
 app.register_blueprint(student_bp, url_prefix="/api")
+app.register_blueprint(admin_bp, url_prefix="/api")
+app.register_blueprint(recruitment_bp, url_prefix="/api")
+
 
 csrf.exempt(user_bp)
 csrf.exempt(company_bp)
 csrf.exempt(student_bp)
 csrf.exempt(admin_bp)
 csrf.exempt(recruitment_bp)
+
+
+csrf.exempt(auth_bp)
+csrf.exempt(student_view_bp)
+csrf.exempt(company_view_bp)
+csrf.exempt(admin_view_bp)
+
 
 # REGISTER VIEW ROUTERS
 app.register_blueprint(auth_bp)

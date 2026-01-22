@@ -2,7 +2,7 @@ from flask import Blueprint, request, redirect, make_response
 import requests
 import secrets
 from utils import wrap_layout, API_URL, get_current_user_from_jwt, auth_headers
-
+from markupsafe import escape
 
 student_view_bp = Blueprint('student_view', __name__)
 
@@ -48,7 +48,7 @@ def student_home():
         student_id = stu["id"]
 
         try:
-            res = requests.get(f"{API_URL}/jobs/", params={"studentId": student_id}, headers=auth_headers(), timeout=5)
+            res = requests.get(f"{API_URL}/jobs/", headers=auth_headers(), timeout=5)
             jobs = res.json() if res.status_code == 200 else []
         except Exception:
             res = requests.get(f"{API_URL}/jobs/", timeout=5)
@@ -81,8 +81,8 @@ def student_home():
         if has_test and test_id not in done_test_ids:
             content += f"""
             <div class="job-card">
-                <h3>{j.get('title','(No title)')}</h3>
-                <p>{j.get('description','')}</p>
+                <h3>{escape(j.get('title','(No title)'))}</h3>
+                <p>{escape(j.get('description',''))}</p>
                 <a href="/student/test/{test_id}">
                     <button style="background:#f59e0b">
                         📝 Làm bài test
@@ -349,7 +349,7 @@ def student_tests(job_id):
     student_id = stu["id"]
     start_res = requests.post(
         f"{API_URL}/tests/start",
-        json={"studentId": student_id, "jobId": job_id},
+        json={"jobId": job_id},
         headers=auth_headers()
     )
     if start_res.status_code in [200, 201]:
@@ -359,6 +359,8 @@ def student_tests(job_id):
 
 @student_view_bp.route("/student/test/<int:test_id>")
 def student_do_test(test_id):
+    
+    csrf_token = generate_csrf_token()
 
     user = require_student_view()
     if not user:
@@ -393,13 +395,17 @@ def student_do_test(test_id):
     <h2>📝 {test.get('testName')}</h2>
     <p>⏱ Thời gian: {test.get('duration')} phút</p>
     <form method="post" action="/student/test/submit/{test_id}">
-        <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
+        <input type="hidden" name="csrf_token" value="{csrf_token}">
         <input type="hidden" name="jobId" value="{test.get('jobId')}">
         {questions_html}
         <button type="submit" style="margin-top:20px;">📤 Nộp bài test</button>
     </form>
     """
-    return wrap_layout(content)
+    
+    resp = make_response(wrap_layout(content))
+    resp.set_cookie("csrf_token", csrf_token, httponly=True, samesite="Lax")
+    return resp
+
 
 @student_view_bp.route("/student/test/submit/<int:test_id>", methods=["POST"])
 def student_test_submit(test_id):

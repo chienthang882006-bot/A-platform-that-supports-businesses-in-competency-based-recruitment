@@ -7,9 +7,6 @@ from utils import wrap_layout, API_URL
 
 auth_bp = Blueprint('auth_view', __name__)
 
-def get_client_ip():
-    return request.headers.get("X-Forwarded-For", request.remote_addr)
-
 def is_strong_password(password: str) -> bool:
     if len(password) < 6:
         return False
@@ -104,10 +101,11 @@ def register():
 def login():
 
     csrf_token = generate_csrf()
+    
     message = ""
 
     if request.method == 'POST':
-        email = request.form.get("email", "")[:100]
+        email = request.form.get("email", "").strip().lower()[:100]
         password = request.form.get("password", "")[:128]
 
         if not email or not password:
@@ -126,6 +124,9 @@ def login():
                         token = data.get("access_token")
                         user = data.get("user", {})
                         role = user.get("role")
+                        
+                        if role not in ("student", "company", "admin"):
+                            return redirect("/auth")
 
                         if not token or not role:
                             message = "Lỗi dữ liệu đăng nhập"
@@ -134,11 +135,12 @@ def login():
                                 redirect(f"/{role}/home")
                             )
                             resp.set_cookie(
-                                "access_token",
+                                "ui_access_token",
                                 token,
                                 httponly=True,
                                 samesite="Lax",
-                                secure=request.is_secure
+                                secure=request.is_secure,
+                                max_age=3600
                             )
                             return resp
 
@@ -168,9 +170,10 @@ def login():
     """)
 
 
-@auth_bp.route('/logout', methods=['POST'])
+@auth_bp.route('/logout', methods=['GET', 'POST'])
 def logout():
     resp = make_response(redirect('/auth'), 302)
-    resp.delete_cookie("access_token")
+    resp.delete_cookie("ui_access_token")
+    resp.delete_cookie("csrf_token")
     return resp
 

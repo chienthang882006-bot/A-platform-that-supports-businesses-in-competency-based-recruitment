@@ -13,10 +13,6 @@ def require_student():
         return jsonify({"detail": "Forbidden"}), 403
     return None
 
-def get_current_student_id():
-    return get_jwt_identity()
-
-
 @recruitment_bp.route("/jobs/", methods=["GET"])
 @jwt_required()
 def get_all_jobs():
@@ -28,6 +24,8 @@ def get_all_jobs():
 
     # lấy job chưa CLOSED
     jobs = db_session.query(Job).filter(Job.status != "CLOSED").all()
+    
+    need_commit = False
 
     result = []
     for j in jobs:
@@ -36,6 +34,7 @@ def get_all_jobs():
         # nếu job đã đủ người: đóng job và bỏ qua (đảm bảo nhất quán)
         if j.maxApplicants and applied_count >= j.maxApplicants:
             j.status = "CLOSED"
+            need_commit = True
             db_session.commit()
             continue
 
@@ -59,6 +58,8 @@ def get_all_jobs():
             "appliedCount": applied_count,
             "maxApplicants": j.maxApplicants
         })
+    if need_commit:
+        db_session.commit()
     return jsonify(result)
 
 
@@ -72,7 +73,7 @@ def apply_job():
     student_id = get_jwt_identity()
     job_id = request.json.get("jobId")
 
-    job = db_session.query(Job).filter(Job.id == job_id).first()
+    job = db_session.query(Job).with_for_update().filter(Job.id == job_id).first()
     if not job:
         return jsonify({"detail": "Job không tồn tại"}), 404
 

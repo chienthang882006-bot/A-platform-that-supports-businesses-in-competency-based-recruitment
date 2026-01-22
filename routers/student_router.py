@@ -18,7 +18,7 @@ def require_student():
     return None
 
 def get_current_student():
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     return db_session.query(Student).filter(Student.userId == user_id).first()
 
 

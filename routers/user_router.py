@@ -82,7 +82,7 @@ def get_users():
 @user_bp.route("/users/", methods=["POST"])
 def create_user():
     data = request.json or {}
-    email = data.get("email", "").strip()
+    email = data.get("email", "").strip().lower()
     password = data.get("password", "")
     role_str = data.get("role", "student")
 
@@ -152,7 +152,7 @@ def create_user():
 def login():
     data = request.json or {}
     ip = request.remote_addr
-    email = data.get("email", "").strip()
+    email = data.get("email", "").strip().lower()
     key = f"{ip}:{email}"
     password = data.get("password")
     
@@ -163,7 +163,12 @@ def login():
         
     user = db_session.query(User).filter(User.email == email).first()
 
-    if not user or not bcrypt.check_password_hash(user.password, password):
+    # Email không tồn tại → KHÔNG tăng attempts
+    if not user:
+        return jsonify({"detail": "Sai tài khoản hoặc mật khẩu"}), 401
+
+    # Email tồn tại nhưng sai mật khẩu → TĂNG attempts
+    if not bcrypt.check_password_hash(user.password, password):
         if key not in LOGIN_ATTEMPTS:
             LOGIN_ATTEMPTS[key] = (1, time())
         else:
@@ -172,14 +177,14 @@ def login():
                 LOGIN_ATTEMPTS[key][1]
             )
         return jsonify({"detail": "Sai tài khoản hoặc mật khẩu"}), 401
-
+    
     if user.status != "active":
         return jsonify({"detail": "Tài khoản đã bị khóa"}), 403
     
     LOGIN_ATTEMPTS.pop(key, None)
 
     access_token = create_access_token(
-        identity=user.id,
+        identity=str(user.id),
         additional_claims={"role": user.role.value}
     )
 
@@ -196,7 +201,10 @@ def login():
 @user_bp.route("/notifications/<int:user_id>", methods=["GET"])
 @jwt_required()
 def get_notifications(user_id):
-    if get_jwt_identity() != user_id:
+    
+    current_user_id = int(get_jwt_identity())
+    
+    if current_user_id != user_id:
         return jsonify({"detail": "Forbidden"}), 403
 
     notifications = db_session.query(Notification).filter(
@@ -209,20 +217,20 @@ def get_notifications(user_id):
         "isRead": n.isRead,
         "createdAt": n.createdAt.strftime("%Y-%m-%d %H:%M")
     } for n in notifications])
-
+    
 
 # MARK NOTIFICATION AS READ
 @user_bp.route("/notifications/read/<int:notif_id>", methods=["PUT"])
 @jwt_required()
 def mark_as_read(notif_id):
     notif = db_session.query(Notification).filter(
-        Notification.id == notif_id
+        Notification.id == notif_id, Notification.isDeleted == False
     ).first()
 
     if not notif:
         return jsonify({"detail": "Không tìm thấy thông báo"}), 404
 
-    if notif.userId != get_jwt_identity():
+    if notif.userId != int(get_jwt_identity()):
         return jsonify({"detail": "Forbidden"}), 403
 
     notif.isRead = True

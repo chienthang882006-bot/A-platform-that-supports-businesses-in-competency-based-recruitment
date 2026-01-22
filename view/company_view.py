@@ -1,32 +1,22 @@
 from flask import Blueprint, request, redirect, make_response
 from markupsafe import escape
-from dotenv import load_dotenv
 import requests
 import json
 import secrets
 import jwt
-import os
-from utils import wrap_layout, API_URL
+from utils import wrap_layout, API_URL, get_current_user_from_jwt, auth_headers
 
-load_dotenv()
 
 company_view_bp = Blueprint('company_view', __name__)
 
-JWT_SECRET = os.getenv("JWT_SECRET_KEY")
-JWT_ALGO = "HS256"
-
 def require_company_view():
-    token = request.cookies.get("access_token")
-    if not token:
+    user = get_current_user_from_jwt()
+    if not user:
         return None
+    if user["role"] != "company":
+        return None
+    return user
 
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
-        if payload.get("role") != "company":
-            return None
-        return payload  # chứa user_id
-    except jwt.InvalidTokenError:
-        return None
 
 def validate_csrf(form_token):
     cookie_token = request.cookies.get("csrf_token")
@@ -37,15 +27,16 @@ def check_application_owner(app_id):
     if not user:
         return False
 
-    user_id = user["sub"]
+    user_id = user["id"]
 
-    comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
+    comp_res = requests.get(f"{API_URL}/companies/user/{user_id}",headers=auth_headers())
     if comp_res.status_code != 200:
         return False
 
     company_id = comp_res.json()["id"]
     check = requests.get(
-        f"{API_URL}/companies/{company_id}/applications/{app_id}"
+        f"{API_URL}/companies/{company_id}/applications/{app_id}",
+        headers=auth_headers()
     )
     return check.status_code == 200
 
@@ -101,7 +92,7 @@ def company_profile():
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]   
+    user_id = user["id"]   
     
     message = ""
 
@@ -116,11 +107,11 @@ def company_profile():
             "description": request.form.get("description")
         }
         try:
-            comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
+            comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
             if comp_res.status_code == 200:
                 company_id = comp_res.json()['id']
-                update_res = requests.put(f"{API_URL}/companies/{company_id}/profile", json=payload)
-                
+                update_res = requests.put(f"{API_URL}/companies/{company_id}/profile", json=payload, headers=auth_headers())
+
                 if update_res.status_code == 200:
                     message = "<div style='background:#dcfce7; color:#166534; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bbf7d0; font-weight:bold;'>✅ Đã lưu hồ sơ thành công!</div>"
                 else:
@@ -130,7 +121,7 @@ def company_profile():
 
     company = {}
     try:
-        res = requests.get(f"{API_URL}/companies/user/{user_id}/profile")
+        res = requests.get(f"{API_URL}/companies/user/{user_id}/profile", headers=auth_headers())
         if res.status_code == 200:
             company = res.json()
     except:
@@ -218,15 +209,15 @@ def company_jobs():
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]   
+    user_id = user["id"]
 
     content = "<h2>📄 Tin tuyển dụng của công ty</h2>"
     try:
-        comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
+        comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
         if comp_res.status_code != 200:
             return wrap_layout("<h2>⚠️ Chưa có hồ sơ công ty</h2>")      
         company = comp_res.json()        
-        jobs_res = requests.get(f"{API_URL}/companies/{company['id']}/jobs")
+        jobs_res = requests.get(f"{API_URL}/companies/{company['id']}/jobs", headers=auth_headers())
         my_jobs = jobs_res.json() if jobs_res.status_code == 200 else []
     except Exception as e:
         return wrap_layout("Không thể xử lý yêu cầu. Vui lòng thử lại sau.")
@@ -276,12 +267,12 @@ def company_create_job():
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]   
+    user_id = user["id"]   
 
     message = ""
     if request.method == 'POST':
         try:
-            comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
+            comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
             company = comp_res.json()
             payload = {
                 "companyId": company['id'],
@@ -307,7 +298,7 @@ def company_create_job():
                     "totalScore": int(request.form.get('totalScore') or 100),
                     "questions": questions
                 }
-            res = requests.post(f"{API_URL}/jobs/", json=payload)      
+            res = requests.post(f"{API_URL}/jobs/", json=payload, headers=auth_headers())      
             if res.status_code in [200, 201]:
                 return redirect('/company/jobs') 
             else:
@@ -394,22 +385,22 @@ def company_edit_job(job_id):
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]   
+    user_id = user["id"]   
 
     message = ""    
     try:
-        comp = requests.get(f"{API_URL}/companies/user/{user_id}").json()
+        comp = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers()).json()
         company_id = comp['id']
-        job_res = requests.get(f"{API_URL}/jobs/{job_id}")
+        job_res = requests.get(f"{API_URL}/jobs/{job_id}", headers=auth_headers())
         if job_res.status_code != 200: return wrap_layout("<h2>❌ Không tìm thấy Job</h2>")
         job = job_res.json()
         if job.get('companyId') != company_id: return wrap_layout("<h2>⛔ Bạn không có quyền</h2>")        
-        test_res = requests.get(f"{API_URL}/jobs/{job_id}/tests")
+        test_res = requests.get(f"{API_URL}/jobs/{job_id}/tests", headers=auth_headers())
         tests = test_res.json() if test_res.status_code == 200 else []
         current_test = tests[0] if tests else None
         test_questions = []
         if current_test:
-             q_res = requests.get(f"{API_URL}/tests/{current_test['id']}")
+             q_res = requests.get(f"{API_URL}/tests/{current_test['id']}", headers=auth_headers())
              if q_res.status_code == 200: test_questions = q_res.json().get('questions', [])
     except Exception as e:
         return wrap_layout(f"<h2>Lỗi tải dữ liệu: {e}</h2>")
@@ -433,7 +424,7 @@ def company_edit_job(job_id):
                     "totalScore": int(request.form['totalScore'] or 100),
                     "questions": questions_list
                 }
-            res = requests.put(f"{API_URL}/jobs/{job_id}", json=payload)
+            res = requests.put(f"{API_URL}/jobs/{job_id}", json=payload, headers=auth_headers())
             if res.status_code == 200: return redirect('/company/jobs')
             else: message = f"Lưu thất bại: {res.text}"
         except Exception as e:
@@ -511,13 +502,13 @@ def company_applications():
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]   
+    user_id = user["id"]   
 
     try:
-        user_id = user["sub"]
-        comp_res = requests.get(f"{API_URL}/companies/user/{user_id}")
+        user_id = user["id"]
+        comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
         company = comp_res.json()
-        apps_res = requests.get(f"{API_URL}/companies/{company['id']}/applications")
+        apps_res = requests.get(f"{API_URL}/companies/{company['id']}/applications", headers=auth_headers())
         apps = apps_res.json() if apps_res.status_code == 200 else []
     except:
         apps = []
@@ -609,19 +600,17 @@ def company_evaluate_application(app_id):
             "interviewFeedback": request.form.get('interviewFeedback'),
             "interviewRating": request.form.get('interviewRating')
         }
-        headers = {
-            "Authorization": f"Bearer {request.cookies.get('access_token')}"
-        }
 
         requests.post(
             f"{API_URL}/applications/{app_id}/evaluate",
             json=payload,
-            headers=headers
+            headers=auth_headers()
         )
+
 
         return redirect('/company/applications')
     
-    res = requests.get(f"{API_URL}/applications/{app_id}/test-detail")
+    res = requests.get(f"{API_URL}/applications/{app_id}/test-detail", headers=auth_headers())
     if res.status_code != 200: return wrap_layout("Lỗi tải dữ liệu")
     data = res.json()
     status = data.get("status", "pending") 
@@ -709,7 +698,7 @@ def company_view_applicants(job_id):
     if not user:
         return redirect('/login')
 
-    try: apps = requests.get(f"{API_URL}/jobs/{job_id}/applications").json()
+    try: apps = requests.get(f"{API_URL}/jobs/{job_id}/applications", headers=auth_headers()).json()
     except: apps = []
     content = f"<h2>📥 Ứng viên cho Job #{job_id}</h2>"
     for a in apps:
@@ -725,13 +714,13 @@ def company_view_cv(app_id):
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]   
+    user_id = user["id"]
 
     
     if not check_application_owner(app_id):
         return wrap_layout("<h2>⛔ Bạn không có quyền truy cập hồ sơ này</h2>")
 
-    res = requests.get(f"{API_URL}/companies/applications/{app_id}/cv")
+    res = requests.get(f"{API_URL}/companies/applications/{app_id}/cv", headers=auth_headers())
 
     if res.status_code != 200:
         return wrap_layout("<h3>❌ Không thể tải thông tin hồ sơ</h3>")
