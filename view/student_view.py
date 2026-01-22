@@ -1,29 +1,19 @@
-from flask import Blueprint, request, redirect, make_response, current_app
-from dotenv import load_dotenv
+from flask import Blueprint, request, redirect, make_response
 import requests
 import secrets
-import jwt
-import os
-from utils import wrap_layout, API_URL
+from utils import wrap_layout, API_URL, get_current_user_from_jwt, auth_headers
 
-load_dotenv()
 
 student_view_bp = Blueprint('student_view', __name__)
 
-JWT_SECRET = os.getenv("JWT_SECRET_KEY")
-JWT_ALGO = "HS256"
 
 def require_student_view():
-    token = request.cookies.get("access_token")
-    if not token:
+    user = get_current_user_from_jwt()
+    if not user:
         return None
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
-        if payload.get("role") != "student":
-            return None
-        return payload
-    except jwt.InvalidTokenError:
+    if user.get("role") != "student":
         return None
+    return user
 
 def generate_csrf_token():
     return secrets.token_hex(16)
@@ -46,25 +36,29 @@ def student_home():
     done_test_ids = []
 
     try:
-        user_id = user["sub"]
-        stu_res = requests.get(f"{API_URL}/students/user/{user_id}", timeout=5)
+        user_id = user["id"]
+        stu_res = requests.get(
+            f"{API_URL}/students/user/{user_id}",
+            headers=auth_headers(),
+            timeout=5
+        )
         if stu_res.status_code != 200:
             return wrap_layout("<p>⚠️ Không tìm thấy hồ sơ sinh viên</p>")
         stu = stu_res.json()
         student_id = stu["id"]
 
         try:
-            res = requests.get(f"{API_URL}/jobs/", params={"studentId": student_id}, timeout=5)
+            res = requests.get(f"{API_URL}/jobs/", params={"studentId": student_id}, headers=auth_headers(), timeout=5)
             jobs = res.json() if res.status_code == 200 else []
         except Exception:
             res = requests.get(f"{API_URL}/jobs/", timeout=5)
             jobs = res.json() if res.status_code == 200 else []
 
-        applied_res = requests.get(f"{API_URL}/students/{student_id}/applications", timeout=5)
+        applied_res = requests.get(f"{API_URL}/students/{student_id}/applications", headers=auth_headers(), timeout=5)
         if applied_res.status_code == 200:
             applied_job_ids = [a["jobId"] for a in applied_res.json()]
 
-        test_done_res = requests.get(f"{API_URL}/students/{student_id}/tests", timeout=5)
+        test_done_res = requests.get(f"{API_URL}/students/{student_id}/tests", headers=auth_headers(), timeout=5)
         if test_done_res.status_code == 200:
             done_test_ids = [t["testId"] for t in test_done_res.json()]
 
@@ -127,12 +121,13 @@ def apply(job_id):
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]
-    stu = requests.get(f"{API_URL}/students/user/{user_id}").json()
+    user_id = user["id"]
+    stu = requests.get(f"{API_URL}/students/user/{user_id}", headers=auth_headers()).json()
     student_id = stu["id"]
     res = requests.post(
         f"{API_URL}/apply/",
-        json={"studentId": student_id, "jobId": job_id}
+        json={"studentId": student_id, "jobId": job_id},
+        headers=auth_headers()
     )
     if res.status_code == 201:
         data = res.json()
@@ -159,8 +154,12 @@ def student_profile():
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]
-    stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
+    user_id = user["id"]
+    stu_res = requests.get(
+        f"{API_URL}/students/user/{user_id}",
+        headers=auth_headers(),
+        timeout=5
+    )
     
     if stu_res.status_code != 200:
         return wrap_layout("<p>Không tìm thấy hồ sơ sinh viên</p>")
@@ -196,7 +195,8 @@ def student_profile():
         
         res = requests.put(
             f"{API_URL}/students/{student_id}",
-            json=payload
+            json=payload,
+            headers=auth_headers()
         )
         if res.status_code == 200:
             message = "<p style='color:green;'>✅ Hồ sơ đã được lưu</p>"
@@ -249,10 +249,14 @@ def student_applications():
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]
+    user_id = user["id"]
     try:
         # 1. Lấy thông tin sinh viên
-        stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
+        stu_res = requests.get(
+            f"{API_URL}/students/user/{user_id}",
+            headers=auth_headers(),
+            timeout=5
+        )
         if stu_res.status_code != 200: 
             return wrap_layout(f"<h2>⚠️ Lỗi: Không tìm thấy sinh viên (API Code {stu_res.status_code})</h2>")
         
@@ -261,7 +265,11 @@ def student_applications():
 
         # 2. Lấy danh sách ứng tuyển (CODE DEBUG)
         app_url = f"{API_URL}/students/{student_id}/applications"
-        app_res = requests.get(app_url)
+        app_res = requests.get(
+            app_url,
+            headers=auth_headers(),
+            timeout=5
+        )
         
         # === NẾU API LỖI, IN RA MÀN HÌNH ĐỂ BẠN THẤY ===
         if app_res.status_code != 200:
@@ -336,12 +344,13 @@ def student_tests(job_id):
     if not user:
         return redirect('/login')
     
-    user_id = user["sub"]
-    stu = requests.get(f"{API_URL}/students/user/{user_id}").json()
+    user_id = user["id"]
+    stu = requests.get(f"{API_URL}/students/user/{user_id}", headers=auth_headers()).json()
     student_id = stu["id"]
     start_res = requests.post(
         f"{API_URL}/tests/start",
-        json={"studentId": student_id, "jobId": job_id}
+        json={"studentId": student_id, "jobId": job_id},
+        headers=auth_headers()
     )
     if start_res.status_code in [200, 201]:
         test_id = start_res.json()["testId"]
@@ -355,34 +364,23 @@ def student_do_test(test_id):
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]
+    user_id = user["id"]
 
-    stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
+    stu_res = requests.get(
+        f"{API_URL}/students/user/{user_id}",
+        headers=auth_headers(),
+        timeout=5
+    )
     if stu_res.status_code != 200:
         return wrap_layout("<p>❌ Không tìm thấy sinh viên</p>")
-    
+
     student_id = stu_res.json()["id"]
-    res = requests.get(f"{API_URL}/tests/{test_id}")
-    
+
+    res = requests.get(f"{API_URL}/tests/{test_id}",headers=auth_headers())
     if res.status_code != 200:
         return wrap_layout("<p>❌ Không tìm thấy bài test</p>")
-    
-    test = res.json()
-    job_id = test.get("jobId")
-    job_to_start = test.get("jobId")
 
-    if not job_to_start:
-        return wrap_layout("<p>❌ Bài test chưa liên kết với job</p>")
-    start_res = requests.post(
-        f"{API_URL}/tests/start",
-        json={"studentId": student_id, "jobId": job_to_start}
-    )
-    if start_res.status_code not in [200, 201]:
-        try:
-            msg = start_res.json().get("detail") or start_res.text
-        except:
-            msg = start_res.text
-        return wrap_layout(f"<p>❌ Không thể bắt đầu bài test: {msg}</p>")
+    test = res.json()
     questions_html = ""
     for idx, q in enumerate(test.get("questions", []), start=1):
         questions_html += f"""
@@ -396,7 +394,7 @@ def student_do_test(test_id):
     <p>⏱ Thời gian: {test.get('duration')} phút</p>
     <form method="post" action="/student/test/submit/{test_id}">
         <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
-        <input type="hidden" name="jobId" value="{job_to_start}">
+        <input type="hidden" name="jobId" value="{test.get('jobId')}">
         {questions_html}
         <button type="submit" style="margin-top:20px;">📤 Nộp bài test</button>
     </form>
@@ -414,17 +412,26 @@ def student_test_submit(test_id):
     if not user:
         return redirect('/login')
 
-    user_id = user["sub"]
+    user_id = user["id"]
 
     # 3. Lấy studentId
-    stu_res = requests.get(f"{API_URL}/students/user/{user_id}")
+    stu_res = requests.get(
+        f"{API_URL}/students/user/{user_id}",
+        headers=auth_headers(),
+        timeout=5
+    )
     if stu_res.status_code != 200:
         return redirect("/student/home?msg=❌+Không+tìm+thấy+sinh+viên")
 
     student_id = stu_res.json()["id"]
 
     # 4. Submit bài test
-    answers = dict(request.form)
+    answers = {
+        k: v for k, v in request.form.items()
+        if k not in ("csrf_token", "jobId")
+    }
+
+    
     submit_payload = {
         "studentId": student_id,
         "score": 0,
@@ -433,9 +440,9 @@ def student_test_submit(test_id):
 
     submit_res = requests.post(
         f"{API_URL}/tests/{test_id}/submit",
-        json=submit_payload
+        json=submit_payload,
+        headers=auth_headers()
     )
-
     if submit_res.status_code not in (200, 201):
         try:
             msg = submit_res.json().get("detail") or submit_res.text
@@ -449,7 +456,8 @@ def student_test_submit(test_id):
         try:
             apply_res = requests.post(
                 f"{API_URL}/apply/",
-                json={"studentId": student_id, "jobId": int(job_id)}
+                json={"studentId": student_id, "jobId": int(job_id)},
+                headers=auth_headers()
             )
 
             if apply_res.status_code in (200, 201):

@@ -2,3 +2,8 @@ sqlalchemy
 flask
 flask_cors
 requests
+flask_jwt_extended
+flask_talisman
+flask_login
+flask_wtf
+dotenv

@@ -1,16 +1,50 @@
 # utils.py
-from flask import request, session
+from flask import request
+from dotenv import load_dotenv
+import jwt
+import os
 import requests
+
+
+load_dotenv()
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+
+def get_current_user_from_jwt():
+    token = request.cookies.get("access_token")
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=["HS256"],
+            options={"verify_sub": False}
+        )
+        return {
+            "id": payload.get("sub"),
+            "role": payload.get("role")
+        }
+    except jwt.InvalidTokenError:
+        return None
+
+def auth_headers():
+    token = request.cookies.get("access_token")
+    if not token:
+        return {}
+    return {
+        "Authorization": f"Bearer {token}"
+    }
 
 # CẤU HÌNH API URL
 API_URL = "http://127.0.0.1:8001/api"
 
 def show_notifications():
-    if 'user' not in session:
+    user = get_current_user_from_jwt()
+    if not user:
         return ""
     
     try:
-        res = requests.get(f"{API_URL}/notifications/{session['user']['id']}")
+        res = requests.get(f"{API_URL}/notifications/{user['id']}")
         count = 0
         list_html = ""
 
@@ -49,11 +83,12 @@ def show_notifications():
 
 def wrap_layout(content):
     hide_sidebar = request.path in ['/auth', '/login', '/register']
+    
+    user = get_current_user_from_jwt()
+    
     notif_html = show_notifications()
-
-    if 'user' in session and not hide_sidebar:
-        user = session['user']
-        menu = ""
+    
+    if user and not hide_sidebar:
         if user['role'] == 'student':
             menu = """
             <a href="/student/home">🏠 Trang chủ</a>
@@ -76,7 +111,7 @@ def wrap_layout(content):
         sidebar = f"""
         <div class="sidebar">
             <div class="profile">
-                <div class="email">{user['email']}</div>
+                <div class="email">User</div>
                 <div class="role">{user['role']}</div>
             </div>
             <div class="menu">

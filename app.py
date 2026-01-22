@@ -20,6 +20,8 @@ from extensions import (
 from routers.user_router import user_bp
 from routers.company_router import company_bp
 from routers.student_router import student_bp
+from routers.recruitment_router import recruitment_bp
+from routers.admin_router import admin_bp
 
 # IMPORT VIEW ROUTERS
 from view.auth_view import auth_bp
@@ -78,6 +80,8 @@ app.register_blueprint(student_bp, url_prefix="/api")
 csrf.exempt(user_bp)
 csrf.exempt(company_bp)
 csrf.exempt(student_bp)
+csrf.exempt(admin_bp)
+csrf.exempt(recruitment_bp)
 
 # REGISTER VIEW ROUTERS
 app.register_blueprint(auth_bp)
