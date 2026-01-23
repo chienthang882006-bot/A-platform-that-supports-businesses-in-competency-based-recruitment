@@ -66,17 +66,23 @@ def get_company_by_user(user_id):
 @jwt_required()
 def get_company_profile(user_id):
     auth = require_company()
-    if auth: return auth
+    if auth:
+        return auth
 
     if get_jwt_identity() != user_id:
         return jsonify({"detail": "Forbidden"}), 403
 
-    company = db_session.query(Company).filter(Company.userId == user_id).first()
+    company = db_session.query(Company)\
+        .filter(Company.userId == user_id)\
+        .first()
+
     if not company:
         return jsonify({"detail": "Company not found"}), 404
 
-    profile = db_session.query(CompanyProfile).filter(CompanyProfile.companyId == company.id).first()
-    
+    profile = db_session.query(CompanyProfile)\
+        .filter(CompanyProfile.companyId == company.id)\
+        .first()
+
     return jsonify({
         "id": company.id,
         "companyName": company.companyName,
@@ -87,6 +93,7 @@ def get_company_profile(user_id):
         "size": profile.size if profile else "",
         "logoUrl": profile.logoUrl if profile else ""
     })
+
 
 @company_bp.route("/companies/<int:company_id>/profile", methods=["PUT"])
 @jwt_required()

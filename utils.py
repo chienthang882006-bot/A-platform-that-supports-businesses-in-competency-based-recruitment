@@ -93,9 +93,20 @@ def show_notifications():
         return ""
 
 def wrap_layout(content):
-    hide_sidebar = request.path in ['/auth', '/login', '/register']
+    hide_sidebar = request.path.startswith(("/auth", "/login", "/register"))
     
     user = get_current_user_from_jwt()
+    
+    if not user:
+        home_url = "/auth"
+    elif user["role"] == "student":
+        home_url = "/student/home"
+    elif user["role"] == "company":
+        home_url = "/company/home"
+    elif user["role"] == "admin":
+        home_url = "/admin/home"
+    else:
+        home_url = "/auth"
     
     notif_html = show_notifications()
     
@@ -108,8 +119,9 @@ def wrap_layout(content):
             """
         elif user['role'] == 'company':
             menu = """
-            <a href="/company/home">🏢 Dashboard</a>
+            <a href="/company/home">🏢 Trang Chủ</a>
             <a href="/company/jobs">📄 Quản lý Job</a>
+            <a href="/company/profile">👤 Hồ sơ</a>
             <a href="/company/applications">📥 Ứng viên</a>
             """
         elif user['role'] == 'admin':
@@ -229,7 +241,7 @@ def wrap_layout(content):
 
     <body class="{ 'no-sidebar' if hide_sidebar else '' }">
         <div class="app-bar">
-            <a href="/student/home" class="app-title">🚀 LabOdc Recruitment</a>
+            <a href="{home_url}" class="app-title">🚀 LabOdc Recruitment</a>
             {notif_html} 
         </div>
 

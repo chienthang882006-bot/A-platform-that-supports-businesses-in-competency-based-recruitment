@@ -78,15 +78,19 @@ def company_home():
 
 @company_view_bp.route('/company/profile', methods=['GET', 'POST'])
 def company_profile():
-    
-    if request.method == "GET":
-        csrf_token = secrets.token_hex(16)
-    else:
-        csrf_token = request.cookies.get("csrf_token")
+    user = require_company_view()
+    if not user:
+        return redirect('/login')
 
-    if request.method == 'POST':
+    csrf_token = request.cookies.get("csrf_token")
+    if not csrf_token:
+        csrf_token = secrets.token_hex(16)
+
+    message = ""
+
+    if request.method == "POST":
         if not validate_csrf(request.form.get("csrf_token")):
-            return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
+            return wrap_layout("<h3 style='color:red'>❌ CSRF token không hợp lệ</h3>")
 
     user = require_company_view()
     if not user:
@@ -147,7 +151,7 @@ def company_profile():
 
                 <div style="flex:3;">
                     <label>Tên công ty <span style="color:red">*</span></label>
-                    <input name="companyName" value="{company.get('companyName', '')}" required style="font-weight:bold;">
+                    <input name="companyName" value="{escape(company.get('companyName', ''))}" required style="font-weight:bold;">
                     
                     <div style="display:flex; gap:15px;">
                         <div style="flex:1;">
@@ -254,14 +258,13 @@ def company_jobs():
 @company_view_bp.route('/company/jobs/create', methods=['GET', 'POST'])
 def company_create_job():
 
-    if request.method == "GET":
+    csrf_token = request.cookies.get("csrf_token")
+    if not csrf_token:
         csrf_token = secrets.token_hex(16)
-    else:
-        csrf_token = request.cookies.get("csrf_token")
 
-    if request.method == 'POST':
+    if request.method == "POST":
         if not validate_csrf(request.form.get("csrf_token")):
-            return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
+            return wrap_layout("<h3 style='color:red'>❌ CSRF token không hợp lệ</h3>")
 
     user = require_company_view()
     if not user:
@@ -372,14 +375,13 @@ def company_create_job():
 @company_view_bp.route('/company/jobs/<int:job_id>/edit', methods=['GET', 'POST'])
 def company_edit_job(job_id):
 
-    if request.method == "GET":
+    csrf_token = request.cookies.get("csrf_token")
+    if not csrf_token:
         csrf_token = secrets.token_hex(16)
-    else:
-        csrf_token = request.cookies.get("csrf_token")
 
-    if request.method == 'POST':
+    if request.method == "POST":
         if not validate_csrf(request.form.get("csrf_token")):
-            return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
+            return wrap_layout("<h3 style='color:red'>❌ CSRF token không hợp lệ</h3>")
 
     user = require_company_view()
     if not user:
@@ -572,14 +574,13 @@ def company_applications():
 @company_view_bp.route('/company/applications/<int:app_id>/evaluate', methods=['GET', 'POST'])
 def company_evaluate_application(app_id):
 
-    if request.method == "GET":
+    csrf_token = request.cookies.get("csrf_token")
+    if not csrf_token:
         csrf_token = secrets.token_hex(16)
-    else:
-        csrf_token = request.cookies.get("csrf_token")
 
-    if request.method == 'POST':
+    if request.method == "POST":
         if not validate_csrf(request.form.get("csrf_token")):
-            return wrap_layout("<h3>CSRF token không hợp lệ</h3>")
+            return wrap_layout("<h3 style='color:red'>❌ CSRF token không hợp lệ</h3>")
 
     if not check_application_owner(app_id):
         return wrap_layout("<h2>Bạn không có quyền truy cập hồ sơ này</h2>")

@@ -141,6 +141,7 @@ def apply(job_id):
 
     return redirect("/student/home")
 
+
 @student_view_bp.route("/student/profile", methods=["GET", "POST"])
 def student_profile():
     
@@ -218,7 +219,7 @@ def student_profile():
         <input name="major" value="{student.get('major','')}">
         <label>Giới thiệu bản thân</label>
         <textarea name="about" rows="3">{profile.get('about','')}</textarea>
-        <label>Trình độ học vấn (VD: Đại học, Cao đẳng)</label>
+        <label>Trình độ học vấn </label>
         <input name="educationLevel" value="{profile.get('educationLevel','')}">
         <label>Bằng cấp / Chứng chỉ</label>
         <input name="degrees" value="{profile.get('degrees','')}">
@@ -333,7 +334,7 @@ def student_applications():
         """
     
     if not html:
-        html = "<p><i>API trả về thành công (200 OK) nhưng danh sách rỗng. Có thể quá trình ứng tuyển chưa được lưu vào database.</i></p>"
+        html = "<p><i>Chưa ứng tuyển công việc nào</i></p>"
 
     return wrap_layout(f"<h2>📌 Việc làm đã ứng tuyển</h2>{html}")
 

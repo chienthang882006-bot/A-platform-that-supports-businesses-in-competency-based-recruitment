@@ -3,7 +3,7 @@ from flask_wtf.csrf import generate_csrf
 from markupsafe import escape
 import requests
 import re
-from utils import wrap_layout, API_URL
+from utils import wrap_layout, API_URL, get_current_user_from_jwt
 
 auth_bp = Blueprint('auth_view', __name__)
 
@@ -23,7 +23,21 @@ def is_strong_password(password: str) -> bool:
 
 @auth_bp.route('/')
 def index():
-    return redirect('/auth')
+    user = get_current_user_from_jwt()
+
+    if not user:
+        return redirect('/auth')
+
+    role = user.get("role")
+
+    if role == "student":
+        return redirect("/student/home")
+    elif role == "company":
+        return redirect("/company/home")
+    elif role == "admin":
+        return redirect("/admin/home")
+
+    return redirect("/auth")
 
 
 @auth_bp.route('/auth')
