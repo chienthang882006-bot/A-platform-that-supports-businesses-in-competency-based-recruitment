@@ -1,12 +1,17 @@
 from flask import Blueprint, request, redirect, make_response
 from markupsafe import escape
+from typing import cast, Any
 import requests
 import json
 import secrets
 import jwt
+from datetime import datetime
 from utils import wrap_layout, API_URL, get_current_user_from_jwt, auth_headers
-
-
+from database import db_session
+from models.user_models import Company, CompanyProfile, Student
+from models.job_models import Job, SkillTest, Question
+from models.app_models import Application, TestResult, Evaluation, Interview, InterviewFeedback, Notification, ApplicationStatus
+from sqlalchemy import func, cast, String
 company_view_bp = Blueprint('company_view', __name__)
 
 def require_company_view():
@@ -51,14 +56,7 @@ def company_home():
     <h2>🏢 Dashboard Doanh nghiệp</h2>
     <p>Xin chào <b>Doanh nghiệp</b></p>
 
-    
     <div style="display:flex; gap:15px; flex-wrap:wrap;">
-        <div class="job-card" style="flex:1; min-width:300px; border-left:5px solid #16a34a;">
-            <h3>⚙️ Hồ sơ công ty</h3>
-            <p>Cập nhật thông tin, logo, website để thu hút ứng viên.</p>
-            <a href="/company/profile"><button style="background:#16a34a;">Cập nhật ngay</button></a>
-        </div>
-
         <div class="job-card" style="flex:1; min-width:300px;">
             <h3>📄 Quản lý tin tuyển dụng</h3>
             <p>Xem, tạo mới và chỉnh sửa các bài đăng.</p>
@@ -78,59 +76,80 @@ def company_home():
 
 @company_view_bp.route('/company/profile', methods=['GET', 'POST'])
 def company_profile():
+    # 1. Kiểm tra đăng nhập
     user = require_company_view()
     if not user:
         return redirect('/login')
 
+    # 2. Xử lý CSRF Token
     csrf_token = request.cookies.get("csrf_token")
     if not csrf_token:
         csrf_token = secrets.token_hex(16)
-
-    message = ""
 
     if request.method == "POST":
         if not validate_csrf(request.form.get("csrf_token")):
             return wrap_layout("<h3 style='color:red'>❌ CSRF token không hợp lệ</h3>")
 
-    user = require_company_view()
-    if not user:
-        return redirect('/login')
-
     user_id = user["id"]   
-    
     message = ""
 
+    # 3. XỬ LÝ LƯU (POST)
     if request.method == 'POST':
-        payload = {
-            "companyName": request.form.get("companyName"),
-            "website": request.form.get("website"),
-            "address": request.form.get("address"),
-            "industry": request.form.get("industry"),
-            "size": request.form.get("size"),
-            "logoUrl": request.form.get("logoUrl"),
-            "description": request.form.get("description")
-        }
         try:
-            comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
-            if comp_res.status_code == 200:
-                company_id = comp_res.json()['id']
-                update_res = requests.put(f"{API_URL}/companies/{company_id}/profile", json=payload, headers=auth_headers())
+            # Lấy thông tin Company từ DB
+            company = db_session.query(Company).filter(Company.userId == user_id).first()
+            
+            if company:
+                # Cập nhật tên công ty
+                # FIX: Bỏ cast(), gán trực tiếp giá trị lấy từ form
+                if request.form.get("companyName"):
+                    company.companyName = request.form.get("companyName") or ""
 
-                if update_res.status_code == 200:
-                    message = "<div style='background:#dcfce7; color:#166534; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bbf7d0; font-weight:bold;'>✅ Đã lưu hồ sơ thành công!</div>"
-                else:
-                    message = f"<div style='color:red; margin-bottom:15px;'>Lỗi API: {update_res.text}</div>"
+                # Tìm hoặc tạo Profile
+                profile = db_session.query(CompanyProfile).filter(CompanyProfile.companyId == company.id).first()
+                if not profile:
+                    profile = CompanyProfile(companyId=company.id)
+                    db_session.add(profile)
+                    db_session.flush()
+
+                # Cập nhật thông tin chi tiết (Xử lý None thành chuỗi rỗng)
+                # FIX: Bỏ cast(Any, ...), chỉ cần lấy value hoặc chuỗi rỗng
+                profile.website = request.form.get("website") or ""
+                profile.address = request.form.get("address") or ""
+                profile.industry = request.form.get("industry") or ""
+                profile.size = request.form.get("size") or ""
+                profile.logoUrl = request.form.get("logoUrl") or ""
+                profile.description = request.form.get("description") or ""
+
+                db_session.commit()
+                message = "<div style='background:#dcfce7; color:#166534; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bbf7d0; font-weight:bold;'>✅ Đã lưu hồ sơ thành công!</div>"
+            else:
+                message = "<div style='color:red; margin-bottom:15px;'>Lỗi: Không tìm thấy thông tin công ty.</div>"
+
         except Exception as e:
-            message = f"<div style='color:red; margin-bottom:15px;'>Lỗi kết nối: {e}</div>"
+            db_session.rollback()
+            print(f"Error saving profile: {e}")
+            message = f"<div style='color:red; margin-bottom:15px;'>Lỗi kết nối CSDL: {str(e)}</div>"
 
-    company = {}
+    # 4. LẤY DỮ LIỆU HIỂN THỊ (GET)
+    company_data = {}
     try:
-        res = requests.get(f"{API_URL}/companies/user/{user_id}/profile", headers=auth_headers())
-        if res.status_code == 200:
-            company = res.json()
-    except:
-        pass
+        comp = db_session.query(Company).filter(Company.userId == user_id).first()
+        if comp:
+            prof = db_session.query(CompanyProfile).filter(CompanyProfile.companyId == comp.id).first()
+            company_data = {
+                "companyName": comp.companyName,
+                "logoUrl": (prof.logoUrl or "") if prof else "",
+                "website": (prof.website or "") if prof else "",
+                "size": (prof.size or "") if prof else "",
+                "industry": (prof.industry or "") if prof else "",
+                "address": (prof.address or "") if prof else "",
+                "description": (prof.description or "") if prof else ""
+            }
+    except Exception as e:
+        print(f"Error loading profile: {e}")
 
+    # 5. RENDER GIAO DIỆN
     content = f"""
     <h2>⚙️ Hồ sơ doanh nghiệp</h2>
     {message}
@@ -141,31 +160,31 @@ def company_profile():
             <div style="display:flex; gap:30px;">
                 <div style="flex:1; text-align:center;">
                     <div style="border: 2px dashed #cbd5e1; border-radius: 12px; padding: 10px; margin-bottom: 15px;">
-                        <img src="{company.get('logoUrl') or 'https://via.placeholder.com/150?text=No+Logo'}" 
+                        <img src="{company_data.get('logoUrl') or 'https://via.placeholder.com/150?text=No+Logo'}" 
                              style="width:100%; height:150px; object-fit:contain; border-radius:8px;"
                              onerror="this.src='https://via.placeholder.com/150?text=Error'">
                     </div>
                     <label style="text-align:left; font-size:13px;">Link Logo (URL ảnh)</label>
-                    <input name="logoUrl" value="{company.get('logoUrl', '')}" placeholder="https://example.com/logo.png">
+                    <input name="logoUrl" value="{company_data.get('logoUrl', '')}" placeholder="https://example.com/logo.png">
                 </div>
 
                 <div style="flex:3;">
                     <label>Tên công ty <span style="color:red">*</span></label>
-                    <input name="companyName" value="{escape(company.get('companyName', ''))}" required style="font-weight:bold;">
+                    <input name="companyName" value="{escape(company_data.get('companyName', ''))}" required style="font-weight:bold;">
                     
                     <div style="display:flex; gap:15px;">
                         <div style="flex:1;">
                             <label>Website</label>
-                            <input name="website" value="{company.get('website', '')}" placeholder="https://mycompany.com">
+                            <input name="website" value="{company_data.get('website', '')}" placeholder="https://mycompany.com">
                         </div>
                         <div style="flex:1;">
                             <label>Quy mô nhân sự</label>
                             <select name="size">
                                 <option value="">-- Chọn quy mô --</option>
-                                <option value="Startup (1-10)" {'selected' if company.get('size')=='Startup (1-10)' else ''}>Startup (1-10)</option>
-                                <option value="Vừa (10-50)" {'selected' if company.get('size')=='Vừa (10-50)' else ''}>Vừa (10-50)</option>
-                                <option value="Lớn (50-200)" {'selected' if company.get('size')=='Lớn (50-200)' else ''}>Lớn (50-200)</option>
-                                <option value="Tập đoàn (>200)" {'selected' if company.get('size')=='Tập đoàn (>200)' else ''}>Tập đoàn (>200)</option>
+                                <option value="Startup (1-10)" {'selected' if company_data.get('size')=='Startup (1-10)' else ''}>Startup (1-10)</option>
+                                <option value="Vừa (10-50)" {'selected' if company_data.get('size')=='Vừa (10-50)' else ''}>Vừa (10-50)</option>
+                                <option value="Lớn (50-200)" {'selected' if company_data.get('size')=='Lớn (50-200)' else ''}>Lớn (50-200)</option>
+                                <option value="Tập đoàn (>200)" {'selected' if company_data.get('size')=='Tập đoàn (>200)' else ''}>Tập đoàn (>200)</option>
                             </select>
                         </div>
                     </div>
@@ -173,16 +192,16 @@ def company_profile():
                     <div style="display:flex; gap:15px;">
                         <div style="flex:1;">
                             <label>Lĩnh vực hoạt động</label>
-                            <input name="industry" value="{company.get('industry', '')}" placeholder="VD: IT Phần mềm, Marketing...">
+                            <input name="industry" value="{company_data.get('industry', '')}" placeholder="VD: IT Phần mềm, Marketing...">
                         </div>
                         <div style="flex:1;">
                             <label>Địa chỉ trụ sở</label>
-                            <input name="address" value="{company.get('address', '')}" placeholder="VD: 123 Đường ABC, Quận 1...">
+                            <input name="address" value="{company_data.get('address', '')}" placeholder="VD: 123 Đường ABC, Quận 1...">
                         </div>
                     </div>
 
                     <label>Giới thiệu công ty</label>
-                    <textarea name="description" rows="6" placeholder="Mô tả về văn hóa, lịch sử, chế độ đãi ngộ...">{company.get('description', '')}</textarea>
+                    <textarea name="description" rows="6" placeholder="Mô tả về văn hóa, lịch sử, chế độ đãi ngộ...">{company_data.get('description', '')}</textarea>
                 </div>
             </div>
 
@@ -206,7 +225,6 @@ def company_profile():
     )
     return resp
 
-
 @company_view_bp.route('/company/jobs')
 def company_jobs():
     user = require_company_view()
@@ -214,50 +232,74 @@ def company_jobs():
         return redirect('/login')
 
     user_id = user["id"]
-
     content = "<h2>📄 Tin tuyển dụng của công ty</h2>"
+
     try:
-        comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
-        if comp_res.status_code != 200:
-            return wrap_layout("<h2>⚠️ Chưa có hồ sơ công ty</h2>")      
-        company = comp_res.json()        
-        jobs_res = requests.get(f"{API_URL}/companies/{company['id']}/jobs", headers=auth_headers())
-        my_jobs = jobs_res.json() if jobs_res.status_code == 200 else []
-    except Exception as e:
-        return wrap_layout("Không thể xử lý yêu cầu. Vui lòng thử lại sau.")
-    content += """
-    <a href="/company/jobs/create" style="display:inline-block; margin:10px 0; padding:10px 14px; background:#16a34a; color:white; border-radius:6px; text-decoration:none; font-weight:bold;">
-        ➕ Tạo Job mới
-    </a>
-    """
-    if not my_jobs:
-        content += "<p>Chưa có tin tuyển dụng nào.</p>"
-    for j in my_jobs:
-        content += f"""
-        <div class="job-card">
-            <div style="display:flex; justify-content:space-between;">
-                <h3>{escape(j['title'])}</h3>
-                <span style="background:#e0f2fe; color:#0284c7; padding:4px 8px; border-radius:4px; font-size:12px; height:fit-content;">{j.get('status','OPEN')}</span>
-            </div>
-            <p style="white-space: pre-line; color:#555;">{escape(j['description'][:150])}...</p>
-            <p><b>Ứng viên:</b> {j.get('appliedCount', 0)} / {j.get('maxApplicants', '∞')}</p>        
-            <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
-                <a href="/company/jobs/{j['id']}/edit" style="margin-right:15px; color:#f59e0b; font-weight:bold; text-decoration:none;">
-                    <i class="fa-solid fa-pen"></i> Chỉnh sửa
-                </a>
-                <a href="/company/jobs/{j['id']}/applications" style="color:#16a34a; font-weight:bold; text-decoration:none;">
-                    <i class="fa-solid fa-users"></i> Xem ứng viên
-                </a>
-            </div>
-        </div>
+        # FIX: Truy vấn trực tiếp DB thay vì gọi API để tránh lỗi
+        # 1. Lấy thông tin công ty
+        company = db_session.query(Company).filter(Company.userId == user_id).first()
+        
+        # Nếu chưa có công ty -> Hiển thị thông báo và nút tạo hồ sơ
+        if not company:
+            return wrap_layout("""
+                <div style="text-align:center; padding:50px;">
+                    <h2 style="color:#f59e0b;">⚠️ Chưa có thông tin công ty</h2>
+                    <p>Hệ thống không tìm thấy thông tin công ty của bạn.</p>
+                    <p>Vui lòng cập nhật hồ sơ trước khi đăng tuyển.</p>
+                    <a href="/company/profile" style="background:#16a34a; color:white; padding:10px 20px; border-radius:5px; text-decoration:none; font-weight:bold;">
+                        👉 Tạo hồ sơ ngay
+                    </a>
+                </div>
+            """)
+
+        # 2. Render nút Tạo Job (Luôn hiện khi đã có company)
+        content += """
+        <a href="/company/jobs/create" style="display:inline-block; margin:10px 0; padding:10px 14px; background:#16a34a; color:white; border-radius:6px; text-decoration:none; font-weight:bold;">
+            ➕ Tạo Job mới
+        </a>
         """
+
+        # 3. Lấy danh sách Job
+        my_jobs = db_session.query(Job).filter(Job.companyId == company.id).order_by(Job.createdAt.desc()).all()
+
+        if not my_jobs:
+            content += "<p>Chưa có tin tuyển dụng nào. Hãy tạo tin đầu tiên!</p>"
+        
+        # 4. Render danh sách Job ra HTML
+        for j in my_jobs:
+            # Đếm số lượng hồ sơ ứng tuyển
+            applied_count = db_session.query(func.count(Application.id)).filter(Application.jobId == j.id).scalar()
+            
+            content += f"""
+            <div class="job-card">
+                <div style="display:flex; justify-content:space-between;">
+                    <h3>{escape(j.title)}</h3>
+                    <span style="background:#e0f2fe; color:#0284c7; padding:4px 8px; border-radius:4px; font-size:12px; height:fit-content;">{j.status}</span>
+                </div>
+                <p style="white-space: pre-line; color:#555;">{escape(j.description[:150])}...</p>
+                <p><b>Ứng viên:</b> {applied_count} / {j.maxApplicants if j.maxApplicants > 0 else '∞'}</p>        
+                <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
+                    <a href="/company/jobs/{j.id}/edit" style="margin-right:15px; color:#f59e0b; font-weight:bold; text-decoration:none;">
+                        <i class="fa-solid fa-pen"></i> Chỉnh sửa
+                    </a>
+                    <a href="/company/jobs/{j.id}/applications" style="color:#16a34a; font-weight:bold; text-decoration:none;">
+                        <i class="fa-solid fa-users"></i> Xem ứng viên
+                    </a>
+                </div>
+            </div>
+            """
+            
+    except Exception as e:
+        print(f"Error loading jobs: {e}")
+        return wrap_layout(f"<h3 style='color:red'>Lỗi tải dữ liệu: {str(e)}</h3>")
+
     resp = make_response(wrap_layout(content))
     return resp
 
 
 @company_view_bp.route('/company/jobs/create', methods=['GET', 'POST'])
 def company_create_job():
-
+    # 1. Kiểm tra CSRF & User
     csrf_token = request.cookies.get("csrf_token")
     if not csrf_token:
         csrf_token = secrets.token_hex(16)
@@ -271,44 +313,60 @@ def company_create_job():
         return redirect('/login')
 
     user_id = user["id"]   
-
     message = ""
+
+    # 2. XỬ LÝ LƯU JOB (TRỰC TIẾP DB)
     if request.method == 'POST':
         try:
-            comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
-            company = comp_res.json()
-            payload = {
-                "companyId": company['id'],
-                "title": request.form['title'],
-                "description": request.form['description'],
-                "location": request.form['location'],
-                "status": "open",
-                "maxApplicants": int(request.form.get("maxApplicants") or 0)
-            }
+            # Lấy thông tin công ty
+            company = db_session.query(Company).filter(Company.userId == user_id).first()
+            if not company:
+                return wrap_layout("Lỗi: Không tìm thấy thông tin công ty.")
+
+            # Tạo Job Mới
+            new_job = Job(
+                companyId=company.id,
+                title=request.form['title'],
+                description=request.form['description'],
+                location=request.form['location'],
+                status="open",
+                maxApplicants=int(request.form.get("maxApplicants") or 0)
+            )
+            db_session.add(new_job)
+            db_session.flush()  # Quan trọng: Lấy ID của Job vừa tạo ngay lập tức
+
+            # Xử lý Bài Test (Nếu có tích chọn)
             if request.form.get('has_test') == 'on':
+                # Tạo bài test
+                new_test = SkillTest(
+                    jobId=new_job.id,
+                    testName=request.form.get('testName', f"Test for {new_job.title}"),
+                    duration=int(request.form.get('duration') or 30),
+                    totalScore=int(request.form.get('totalScore') or 100)
+                )
+                db_session.add(new_test)
+                db_session.flush() # Lấy ID bài test
+
+                # Lưu danh sách câu hỏi
                 q_contents = request.form.getlist('q_content[]')
-                questions = []
                 for c in q_contents:
                     if c.strip():
-                        questions.append({
-                            "content": c,
-                            "options": "", 
-                            "correctAnswer": "" 
-                        })              
-                payload["test"] = {
-                    "testName": request.form.get('testName', f"Test for {payload['title']}"),
-                    "duration": int(request.form.get('duration') or 30),
-                    "totalScore": int(request.form.get('totalScore') or 100),
-                    "questions": questions
-                }
-            res = requests.post(f"{API_URL}/jobs/", json=payload, headers=auth_headers())      
-            if res.status_code in [200, 201]:
-                return redirect('/company/jobs') 
-            else:
-                message = "Không thể xử lý yêu cầu. Vui lòng thử lại sau."
+                        db_session.add(Question(
+                            testId=new_test.id,
+                            content=c.strip(),
+                            options="", 
+                            correctAnswer=""
+                        ))
+
+            db_session.commit()
+            return redirect('/company/jobs') 
+
         except Exception as e:
-            message = "Không thể xử lý yêu cầu. Vui lòng thử lại sau."
+            db_session.rollback()
+            print(f"Error creating job: {e}")
+            message = f"Lỗi hệ thống: {str(e)}"
     
+    # 3. RENDER GIAO DIỆN (Giữ nguyên phần HTML)
     html = f"""
     <h2>📄 Tạo tin tuyển dụng</h2>
     <p style="color:red; font-weight:bold;">{message}</p>
@@ -505,67 +563,104 @@ def company_applications():
         return redirect('/login')
 
     user_id = user["id"]   
-
-    try:
-        user_id = user["id"]
-        comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
-        company = comp_res.json()
-        apps_res = requests.get(f"{API_URL}/companies/{company['id']}/applications", headers=auth_headers())
-        apps = apps_res.json() if apps_res.status_code == 200 else []
-    except:
-        apps = []
-
     content = "<h2>📥 Danh sách hồ sơ ứng tuyển</h2>"
 
-    if not apps:
-        content += "<p style='color:#666;'>Chưa có hồ sơ nào.</p>"
-    else:
-        content += """
-        <table style="width:100%; border-collapse:collapse; background:white; margin-top:20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-radius:8px; overflow:hidden;">
-            <thead style="background:#f1f5f9; border-bottom:2px solid #e2e8f0;">
-                <tr>
-                    <th style="padding:15px; text-align:left;">Ứng viên</th>
-                    <th style="padding:15px; text-align:left;">Vị trí</th>
-                    <th style="padding:15px;">Điểm</th>
-                    <th style="padding:15px;">Trạng thái</th>
-                    <th style="padding:15px; text-align:right;">Hành động</th>
-                </tr>
-            </thead>
-            <tbody>
-        """
+    try:
+        # 1. Lấy thông tin Company
+        company = db_session.query(Company).filter(Company.userId == user_id).first()
+        if not company:
+             return wrap_layout("<h2>⚠️ Chưa có hồ sơ công ty</h2>")
 
-        for a in apps:
-            score_display = f"<b>{a['testScore']}</b>" if a['testScore'] != "N/A" else "--"
+        # 2. TRUY VẤN AN TOÀN (Safe Query)
+        # Thay vì query cả object Application (gây lỗi Enum), ta chỉ lấy các cột cần thiết
+        # và ép kiểu status sang String để tránh crash.
+        apps_data = db_session.query(
+            Application.id.label("app_id"),
+            Application.appliedAt,
+            cast(Application.status, String).label("status_safe"), # <--- FIX QUAN TRỌNG
+            Student.fullName.label("student_name"),
+            Job.title.label("job_title"),
+            Application.jobId,
+            Application.studentId
+        )\
+        .join(Job, Application.jobId == Job.id)\
+        .join(Student, Application.studentId == Student.id)\
+        .filter(Job.companyId == company.id)\
+        .order_by(Application.appliedAt.desc())\
+        .all()
 
-            content += f"""
-            <tr style="border-bottom:1px solid #eee;">
-                <td style="padding:15px;">
-                    <b>{escape(a['studentName'])}</b>
-                </td>
-                <td style="padding:15px;">
-                    {a['jobTitle']}
-                </td>
-                <td style="padding:15px; text-align:center;">
-                    {score_display}
-                </td>
-                <td style="padding:15px; text-align:center;">
-                    <span style="background:#e0f2fe; color:#0369a1; padding:4px 8px; border-radius:12px; font-size:12px; font-weight:bold;">{a['status']}</span>
-                </td>
-                <td style="padding:15px; text-align:right;">
-                    <a href="/company/applications/{a['applicationId']}/cv"
-                       style="margin-right:5px; background:#2563eb; color:white; padding:6px 10px; border-radius:4px; text-decoration:none; font-size:13px;">
-                        <i class="fa-solid fa-eye"></i> Xem CV
-                    </a>
-
-                    <a href="/company/applications/{a['applicationId']}/evaluate"
-                       style="background:#0f172a; color:white; padding:6px 10px; border-radius:4px; text-decoration:none; font-size:13px;">
-                        <i class="fa-solid fa-pen-to-square"></i> Đánh giá
-                    </a>
-                </td>
-            </tr>
+        if not apps_data:
+            content += "<p style='color:#666;'>Chưa có hồ sơ nào.</p>"
+        else:
+            content += """
+            <table style="width:100%; border-collapse:collapse; background:white; margin-top:20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-radius:8px; overflow:hidden;">
+                <thead style="background:#f1f5f9; border-bottom:2px solid #e2e8f0;">
+                    <tr>
+                        <th style="padding:15px; text-align:left;">Ứng viên</th>
+                        <th style="padding:15px; text-align:left;">Vị trí</th>
+                        <th style="padding:15px;">Điểm Test</th>
+                        <th style="padding:15px;">Trạng thái</th>
+                        <th style="padding:15px; text-align:right;">Hành động</th>
+                    </tr>
+                </thead>
+                <tbody>
             """
 
-        content += "</tbody></table>"
+            for row in apps_data:
+                # Logic hiển thị điểm
+                score_display = "--"
+                test = db_session.query(SkillTest).filter(SkillTest.jobId == row.jobId).first()
+                if test:
+                    result = db_session.query(TestResult).filter(
+                        TestResult.testId == test.id, 
+                        TestResult.studentId == row.studentId
+                    ).first()
+                    if result:
+                        score_display = f"<b>{result.score}/{test.totalScore}</b>"
+
+                # Logic hiển thị trạng thái (Xử lý cả chữ hoa và thường)
+                status_raw = str(row.status_safe).lower() # Chuyển hết về thường để so sánh
+                status_html = f'<span style="font-weight:bold;">{status_raw.upper()}</span>'
+                
+                if "pending" in status_raw: status_html = "<span style='color:#f59e0b'>⏳ Chờ duyệt</span>"
+                elif "testing" in status_raw: status_html = "<span style='color:#8b5cf6'>📝 Đang làm bài</span>"
+                elif "interview" in status_raw: status_html = "<span style='color:#3b82f6'>🎤 Phỏng vấn</span>"
+                elif "offered" in status_raw: status_html = "<span style='color:#16a34a'>✅ Đã Offer</span>"
+                elif "rejected" in status_raw: status_html = "<span style='color:#ef4444'>❌ Từ chối</span>"
+
+                content += f"""
+                <tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:15px;">
+                        <b>{escape(row.student_name)}</b>
+                    </td>
+                    <td style="padding:15px;">
+                        {escape(row.job_title)}
+                    </td>
+                    <td style="padding:15px; text-align:center;">
+                        {score_display}
+                    </td>
+                    <td style="padding:15px; text-align:center;">
+                        <span style="background:#f8fafc; padding:4px 10px; border-radius:15px; font-size:13px; border:1px solid #e2e8f0;">
+                            {status_html}
+                        </span>
+                    </td>
+                    <td style="padding:15px; text-align:right;">
+                        <a href="/company/applications/{row.app_id}/cv"
+                           style="margin-right:5px; background:#2563eb; color:white; padding:6px 12px; border-radius:4px; text-decoration:none; font-size:13px;">
+                            <i class="fa-solid fa-eye"></i> Xem CV
+                        </a>
+                        <a href="/company/applications/{row.app_id}/evaluate"
+                           style="background:#0f172a; color:white; padding:6px 12px; border-radius:4px; text-decoration:none; font-size:13px;">
+                            <i class="fa-solid fa-pen-to-square"></i> Đánh giá
+                        </a>
+                    </td>
+                </tr>
+                """
+            content += "</tbody></table>"
+
+    except Exception as e:
+        print(f"Error loading applications: {e}")
+        return wrap_layout(f"<h3 style='color:red'>Lỗi tải dữ liệu: {str(e)}</h3>")
 
     resp = make_response(wrap_layout(content))
     return resp
@@ -573,7 +668,7 @@ def company_applications():
 
 @company_view_bp.route('/company/applications/<int:app_id>/evaluate', methods=['GET', 'POST'])
 def company_evaluate_application(app_id):
-
+    # 1. Kiểm tra User & CSRF
     csrf_token = request.cookies.get("csrf_token")
     if not csrf_token:
         csrf_token = secrets.token_hex(16)
@@ -582,115 +677,206 @@ def company_evaluate_application(app_id):
         if not validate_csrf(request.form.get("csrf_token")):
             return wrap_layout("<h3 style='color:red'>❌ CSRF token không hợp lệ</h3>")
 
-    if not check_application_owner(app_id):
-        return wrap_layout("<h2>Bạn không có quyền truy cập hồ sơ này</h2>")
-
     user = require_company_view()
     if not user:
         return redirect('/login')
 
-    if request.method == 'POST':
-        payload = {
-            "nextStatus": request.form.get('action'),
-            "skillScore": request.form.get('skillScore'),
-            "peerReview": request.form.get('peerReview'),
-            "improvement": request.form.get('improvement'),
-            "interviewTime": request.form.get('interviewTime'),
-            "interviewLocation": request.form.get('interviewLocation'),
-            "interviewNote": request.form.get('interviewNote'),
-            "interviewFeedback": request.form.get('interviewFeedback'),
-            "interviewRating": request.form.get('interviewRating')
-        }
+    user_id = user["id"]
 
-        requests.post(
-            f"{API_URL}/applications/{app_id}/evaluate",
-            json=payload,
-            headers=auth_headers()
-        )
+    try:
+        # 2. Lấy thông tin Company
+        company = db_session.query(Company).filter(Company.userId == user_id).first()
+        if not company:
+            return wrap_layout("<h2>❌ Lỗi: Không tìm thấy thông tin công ty</h2>")
 
+        # 3. TRUY VẤN: Lấy Application (Join để lấy Job, Student, SkillTest)
+        app_item = db_session.query(Application)\
+            .join(Job, Application.jobId == Job.id)\
+            .filter(Application.id == app_id, Job.companyId == company.id)\
+            .first()
 
-        return redirect('/company/applications')
-    
-    res = requests.get(f"{API_URL}/applications/{app_id}/test-detail", headers=auth_headers())
-    if res.status_code != 200: return wrap_layout("Lỗi tải dữ liệu")
-    data = res.json()
-    status = data.get("status", "pending") 
-    
-    test_html = ""
-    if data.get("hasTest") and data.get("submitted"):
-        rows = ""
-        for idx, item in enumerate(data['details'], 1):
-             rows += f"<div style='margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:5px;'><b>Câu {idx}:</b> {item['question']}<br><i>TL: {item['answer']}</i></div>"
-        test_html = f"<div class='job-card' style='border-left:6px solid #f59e0b;'><h3>📝 Bài test (Điểm: {data['score']})</h3>{rows}</div>"
+        if not app_item:
+            return wrap_layout("<h2>⛔ Bạn không có quyền truy cập hồ sơ này</h2>")
 
-    form_html = ""
+        # --- XỬ LÝ TRẠNG THÁI HIỂN THỊ ---
+        status_raw = str(app_item.status) 
+        if "." in status_raw:
+            status = status_raw.split(".")[-1].lower() 
+        else:
+            status = status_raw.lower()
 
-    if status in ['pending', 'testing']:
-        form_html = f"""
-        <div class="job-card" style="border-left:6px solid #8b5cf6;">
-            <h3>🔍 Vòng 1: Sơ tuyển hồ sơ</h3>
-            <form method="post">
-                <input type="hidden" name="csrf_token" value="{csrf_token}">
-                <div style="margin-bottom:20px;">
-                    <label>Điểm hồ sơ</label><input type="number" name="skillScore">
-                    <label>Nhận xét</label><textarea name="peerReview"></textarea>
-                    <label>Cần cải thiện</label><textarea name="improvement"></textarea>
-                </div>
-                <div style="background:#f0fdf4; padding:15px; border-radius:6px; margin-bottom:20px;">
-                    <h4 style="margin:0 0 10px 0; color:#166534;">📅 Lên lịch phỏng vấn</h4>
-                    <div style="display:flex; gap:10px;">
-                        <input type="datetime-local" name="interviewTime" style="flex:1">
-                        <input name="interviewLocation" placeholder="Địa điểm / Link Online" style="flex:2">
-                    </div>
-                    <input name="interviewNote" placeholder="Ghi chú dặn dò...">
-                </div>
-                <div style="display:flex; gap:10px;">
-                    <button name="action" value="interview" style="background:#2563eb;">✅ Duyệt & Mời PV</button>
-                    <button name="action" value="rejected" style="background:#ef4444;">❌ Loại hồ sơ</button>
-                </div>
-            </form>
-        </div>
-        """
-    elif status == 'interview':
-        form_html = f"""
-        <div class="job-card" style="border-left:6px solid #ec4899;">
-            <h3>🎤 Vòng 2: Đánh giá Phỏng vấn</h3>
-            <p>Hồ sơ này đang trong quá trình phỏng vấn. Hãy nhập kết quả sau khi gặp ứng viên.</p>
-            <form method="post">
-                <input type="hidden" name="csrf_token" value="{csrf_token}">
-                <label>Nhận xét buổi phỏng vấn (Interview Feedback)</label>
-                <textarea name="interviewFeedback" rows="5" required placeholder="Ứng viên trả lời thế nào? Thái độ ra sao?"></textarea>
+        # 4. XỬ LÝ POST (Lưu đánh giá)
+        if request.method == 'POST':
+            action = request.form.get('action')
+            
+            if action == 'interview':
+                # Lưu đánh giá
+                eval_obj = Evaluation(
+                    applicationId=app_item.id,
+                    skillScore=int(request.form.get("starRating") or 0),
+                    peerReview=request.form.get("peerReview"),
+                    improvement=request.form.get("improvement")
+                )
+                db_session.add(eval_obj)
                 
-                <label>Điểm đánh giá (1 - 5)</label>
-                <select name="interviewRating">
-                    <option value="5">⭐⭐⭐⭐⭐ (Xuất sắc)</option>
-                    <option value="4">⭐⭐⭐⭐ (Tốt)</option>
-                    <option value="3">⭐⭐⭐ (Khá)</option>
-                    <option value="2">⭐⭐ (Trung bình)</option>
-                    <option value="1">⭐ (Kém)</option>
-                </select>
+                # Cập nhật trạng thái (Dùng Enum Object)
+                app_item.status = ApplicationStatus.INTERVIEW 
+                
+                # Tạo lịch phỏng vấn
+                time_str = request.form.get("interviewTime")
+                interview_time = None
+                if time_str:
+                    try:
+                        interview_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M")
+                    except ValueError:
+                        pass
+                
+                interview = Interview(
+                    applicationId=app_item.id,
+                    interviewDate=interview_time,
+                    location=request.form.get("interviewLocation"),
+                    note=request.form.get("interviewNote"),
+                    status="Scheduled"
+                )
+                db_session.add(interview)
+                
+                # Thông báo
+                display_time = time_str.replace("T", " ") if time_str else "Sẽ thông báo sau"
+                msg = f"🎉 Chúc mừng! Bạn được mời phỏng vấn vị trí '{app_item.job.title}'. ⏰ {display_time}."
+                db_session.add(Notification(userId=app_item.student.userId, content=msg))
 
-                <div style="display:flex; gap:10px; margin-top:20px;">
-                    <button name="action" value="offered" style="background:#16a34a;">💌 Gửi Offer (Đậu)</button>
-                    <button name="action" value="rejected" style="background:#ef4444;">❌ Từ chối (Trượt)</button>
-                </div>
-            </form>
-        </div>
-        """
-    else:
-        form_html = f"<div class='job-card'><h3>🏁 Hồ sơ đã đóng</h3><p>Trạng thái hiện tại: <b>{status.upper()}</b></p></div>"
+            elif action == 'rejected':
+                app_item.status = ApplicationStatus.REJECTED 
+                db_session.add(Notification(userId=app_item.student.userId, content=f"⚠️ Hồ sơ vị trí '{app_item.job.title}' của bạn chưa phù hợp lúc này."))
+            
+            elif action == 'offered':
+                interview = db_session.query(Interview).filter(Interview.applicationId == app_item.id).order_by(Interview.id.desc()).first()
+                if interview:
+                    db_session.add(InterviewFeedback(
+                        interviewId=interview.id,
+                        feedback=request.form.get("interviewFeedback"),
+                        rating=int(request.form.get("interviewRating") or 0)
+                    ))
+                    interview.status = "Completed"
+                
+                app_item.status = ApplicationStatus.OFFERED
+                db_session.add(Notification(userId=app_item.student.userId, content=f"💌 CHÚC MỪNG! Bạn nhận được OFFER chính thức cho vị trí '{app_item.job.title}'."))
 
-    html = f"<h2>⚖️ Quy trình tuyển dụng</h2>{test_html}{form_html}"
+            db_session.commit()
+            return redirect('/company/applications')
 
-    resp = make_response(wrap_layout(html))
-    resp.set_cookie(
-        "csrf_token",
-        csrf_token,
-        httponly=True,
-        samesite="Lax",
-        secure=request.is_secure
-    )
-    return resp
+        # 5. XỬ LÝ GET (Hiển thị)
+        test_details_html = ""
+        if app_item.job.skill_tests:
+            test = app_item.job.skill_tests[0]
+            result = db_session.query(TestResult).filter(TestResult.testId == test.id, TestResult.studentId == app_item.studentId).first()
+            if result:
+                questions = db_session.query(Question).filter(Question.testId == test.id).all()
+                student_answers = {}
+                try:
+                    if result.answers: student_answers = json.loads(result.answers)
+                except: pass
+
+                qa_html = ""
+                for i, q in enumerate(questions, 1):
+                    ans_key = f"answer_{q.id}"
+                    user_ans = student_answers.get(ans_key, "<span style='color:#999'>Chưa trả lời</span>")
+                    qa_html += f"""
+                    <div style="margin-bottom:15px; border-bottom:1px dashed #e2e8f0; padding-bottom:10px;">
+                        <p style="margin:0; font-weight:bold; color:#1e293b;">Câu {i}: {escape(q.content)}</p>
+                        <div style="margin-top:5px; background:#f8fafc; padding:8px; border-radius:4px; border-left:3px solid #3b82f6;">
+                            <span style="font-weight:bold; color:#3b82f6;">Trả lời:</span> {escape(user_ans)}
+                        </div>
+                    </div>"""
+                
+                test_details_html = f"""
+                <div class='job-card' style='border-left:6px solid #f59e0b;'>
+                    <h3>📝 Bài làm chi tiết</h3>
+                    <p><b>Tổng điểm:</b> <span style="font-size:18px; color:#d97706; font-weight:bold;">{result.score} / {test.totalScore}</span></p>
+                    <div style="max-height:400px; overflow-y:auto; padding-right:10px; border:1px solid #e2e8f0; padding:15px; border-radius:8px;">{qa_html}</div>
+                </div>"""
+            else:
+                 test_details_html = "<div class='job-card'>⚠️ Ứng viên chưa làm bài test.</div>"
+
+        form_html = ""
+        if status in ['pending', 'testing']:
+            form_html = f"""
+            <div class="job-card" style="border-left:6px solid #8b5cf6;">
+                <h3>🔍 Đánh giá năng lực & Mời phỏng vấn</h3>
+                <form method="post">
+                    <input type="hidden" name="csrf_token" value="{csrf_token}">
+                    <div style="display:flex; gap:20px; margin-bottom:15px;">
+                        <div style="flex:1;">
+                            <label>Đánh giá hồ sơ (Sao)</label>
+                            <select name="starRating" style="font-size:16px; color:#d97706; font-weight:bold;">
+                                <option value="5">⭐⭐⭐⭐⭐ (Xuất sắc)</option>
+                                <option value="4">⭐⭐⭐⭐ (Tốt)</option>
+                                <option value="3" selected>⭐⭐⭐ (Khá)</option>
+                                <option value="2">⭐⭐ (Trung bình)</option>
+                                <option value="1">⭐ (Kém)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <label>Nhận xét ưu điểm</label>
+                    <textarea name="peerReview" rows="2" placeholder="Ví dụ: Tư duy logic tốt..."></textarea>
+                    <div style="background:#f0fdf4; padding:20px; border-radius:8px; margin: 20px 0; border:1px solid #bbf7d0;">
+                        <h4 style="margin:0 0 15px 0; color:#166534;"><i class="fa-solid fa-calendar-check"></i> Thông tin phỏng vấn</h4>
+                        <div style="display:flex; gap:15px; margin-bottom:10px;">
+                            <div style="flex:1;"><label style="font-size:13px;">Thời gian bắt đầu</label><input type="datetime-local" name="interviewTime" required></div>
+                            <div style="flex:2;"><label style="font-size:13px;">Địa điểm / Link Online</label><input name="interviewLocation" required placeholder="VD: Phòng 202..."></div>
+                        </div>
+                        <label style="font-size:13px;">Ghi chú thêm</label><input name="interviewNote" placeholder="VD: Mang theo laptop...">
+                    </div>
+                    <div style="display:flex; gap:10px; border-top:1px solid #eee; padding-top:20px;">
+                        <button name="action" value="interview" style="background:#2563eb; flex:1;">✅ Duyệt & Gửi lời mời</button>
+                        <button name="action" value="rejected" style="background:#ef4444; width:auto;">❌ Từ chối</button>
+                    </div>
+                </form>
+            </div>"""
+        elif status == 'interview':
+            form_html = f"""
+            <div class="job-card" style="border-left:6px solid #ec4899;">
+                <h3>🎤 Kết quả phỏng vấn</h3>
+                <form method="post">
+                    <input type="hidden" name="csrf_token" value="{csrf_token}">
+                    <label>Nhận xét buổi phỏng vấn</label><textarea name="interviewFeedback" rows="5" required></textarea>
+                    <label>Đánh giá chung</label>
+                    <select name="interviewRating" style="font-size:16px;">
+                        <option value="5">⭐⭐⭐⭐⭐ (Xuất sắc)</option>
+                        <option value="4">⭐⭐⭐⭐ (Tốt)</option>
+                        <option value="3">⭐⭐⭐ (Khá)</option>
+                        <option value="2">⭐⭐ (Thấp)</option>
+                        <option value="1">⭐ (Rất thấp)</option>
+                    </select>
+                    <div style="display:flex; gap:10px; margin-top:20px;">
+                        <button name="action" value="offered" style="background:#16a34a; flex:1;">💌 Gửi Offer</button>
+                        <button name="action" value="rejected" style="background:#ef4444; width:auto;">❌ Từ chối</button>
+                    </div>
+                </form>
+            </div>"""
+        else:
+            color = "#16a34a" if status == 'offered' else "#ef4444"
+            status_text = "ĐÃ TRÚNG TUYỂN" if status == 'offered' else "ĐÃ TỪ CHỐI"
+            form_html = f"<div class='job-card' style='border-left: 6px solid {color}; text-align:center; padding:40px;'><h3 style='color:{color};'>{status_text}</h3><a href='/company/applications'>Quay lại</a></div>"
+
+        html = f"<h2>⚖️ Quy trình tuyển dụng: {escape(app_item.student.fullName)}</h2>{test_details_html}{form_html}"
+
+        resp = make_response(wrap_layout(html))
+        
+        # --- FIX: Set cookie để CSRF hoạt động ---
+        resp.set_cookie(
+            "csrf_token",
+            csrf_token,
+            httponly=True,
+            samesite="Lax",
+            secure=request.is_secure
+        )
+        return resp
+
+    except Exception as e:
+        db_session.rollback()
+        print(f"Error evaluating app: {e}")
+        return wrap_layout(f"<h3>❌ Lỗi hệ thống: {str(e)}</h3>")
     
 
 @company_view_bp.route('/company/jobs/<int:job_id>/applications')
@@ -710,97 +896,119 @@ def company_view_applicants(job_id):
 
 @company_view_bp.route("/company/applications/<int:app_id>/cv")
 def company_view_cv(app_id):
-    
+    # 1. Kiểm tra đăng nhập
     user = require_company_view()
     if not user:
         return redirect('/login')
 
     user_id = user["id"]
 
-    
-    if not check_application_owner(app_id):
-        return wrap_layout("<h2>⛔ Bạn không có quyền truy cập hồ sơ này</h2>")
+    try:
+        # 2. Lấy Company hiện tại
+        company = db_session.query(Company).filter(Company.userId == user_id).first()
+        if not company:
+            return wrap_layout("<h2>❌ Lỗi: Không tìm thấy thông tin công ty</h2>")
 
-    res = requests.get(f"{API_URL}/companies/applications/{app_id}/cv", headers=auth_headers())
+        # 3. TRUY VẤN TRỰC TIẾP: Lấy Application và kiểm tra quyền sở hữu
+        # Logic: Tìm Application có ID = app_id VÀ thuộc Job của Company này
+        app_item = db_session.query(Application)\
+            .join(Job, Application.jobId == Job.id)\
+            .filter(Application.id == app_id, Job.companyId == company.id)\
+            .first()
 
-    if res.status_code != 200:
-        return wrap_layout("<h3>❌ Không thể tải thông tin hồ sơ</h3>")
+        # Nếu không tìm thấy -> Tức là hồ sơ không tồn tại hoặc không thuộc công ty này
+        if not app_item:
+            return wrap_layout("<h2>⛔ Bạn không có quyền truy cập hồ sơ này</h2>")
 
-    data = res.json()
+        # 4. Lấy dữ liệu Student & Profile
+        student = app_item.student
+        profile = student.profile
+        
+        # Xử lý Skills (danh sách kỹ năng)
+        skills_html = ""
+        if student.skills:
+            for s in student.skills:
+                # Kiểm tra null safe cho skill name
+                skill_name = s.skill.name if s.skill else "Unknown"
+                skills_html += f'<span class="badge-skill">{skill_name} (Lv.{s.level})</span>'
+        
+        if not skills_html:
+            skills_html = '<span style="color:#999; font-style:italic;">Chưa cập nhật kỹ năng.</span>'
 
-    skills_html = ""
-    if data.get("skills") and isinstance(data["skills"], list):
-        for s in data["skills"]:
-            skills_html += f'<span class="badge-skill">{s["name"]} (Lv.{s["level"]})</span>'
-    else:
-        skills_html = '<span style="color:#999; font-style:italic;">Chưa cập nhật kỹ năng.</span>'
+        # Xử lý các trường dữ liệu có thể null
+        dob = student.dob.strftime("%d/%m/%Y") if student.dob else "Chưa cập nhật"
+        cccd = getattr(student, "cccd", "Chưa cập nhật") or "Chưa cập nhật"
+        
+        edu_level = profile.educationLevel if profile else "Chưa cập nhật"
+        degrees = profile.degrees if profile else "Chưa cập nhật"
+        about = profile.about if profile else "Ứng viên chưa viết giới thiệu."
+        cv_url = profile.cvUrl if profile else "#"
+        portfolio_url = getattr(profile, "portfolioUrl", None)
 
-    dob = data.get("dob") if data.get("dob") else "Chưa cập nhật"
-    cccd = data.get("cccd") if data.get("cccd") else "Chưa cập nhật"
-    education = data.get("educationLevel") if data.get("educationLevel") else "Chưa cập nhật"
-    degrees = data.get("degrees") if data.get("degrees") else "Chưa cập nhật"
-    about = data.get("about") if data.get("about") else "Ứng viên chưa viết giới thiệu."
-    portfolio_url = data.get("portfolioUrl")
+        # 5. Render Giao diện (HTML)
+        content = f"""
+        <h2>📄 Chi tiết hồ sơ ứng viên</h2>
+        <a href="/company/applications">← Quay lại danh sách</a>
 
-    content = f"""
-    <h2>📄 Chi tiết hồ sơ ứng viên</h2>
-    <a href="/company/applications">← Quay lại danh sách</a>
-
-    <div class="job-card">
-        <div class="cv-container">
-            <div class="cv-left">
-                <img src="https://ui-avatars.com/api/?name={data.get('studentName', 'User')}&size=128&background=random&color=fff&rounded=true" 
-                     style="border-radius:50%; margin-bottom:15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" alt="Avatar">
-                
-                <h2 style="color:#1e40af; margin-bottom:5px;">{data.get('studentName', 'N/A')}</h2>
-                <p style="color:#64748b; font-weight:bold; margin-top:0;">{data.get('major', 'Chưa có ngành')}</p>
-                
-                <hr style="border:0; border-top:1px solid #e2e8f0; margin: 20px 0;">
-                
-                <p style="font-size:13px; color:#64748b;">Vị trí ứng tuyển</p>
-                <p style="font-weight:bold; color:#0f172a;">{data.get('jobTitle', 'N/A')}</p>
-                
-                <div style="margin-top:30px;">
-                    <a href="{data.get('cvUrl', '#')}" target="_blank">
-                        <button style="background:#dc2626; margin-bottom:10px;">
-                            <i class="fa-solid fa-file-pdf"></i> Xem CV Gốc (PDF)
-                        </button>
-                    </a>
-                    {f'<a href="{portfolio_url}" target="_blank"><button style="background:#334155;"><i class="fa-solid fa-globe"></i> Xem Portfolio</button></a>' if portfolio_url else ''}
-                </div>
-            </div>
-
-            <div class="cv-right">
-                <div class="section-title"><i class="fa-solid fa-user"></i> Thông tin cá nhân</div>
-                <div style="display:flex; gap:20px; margin-bottom:15px;">
-                    <div style="flex:1;"><strong>📅 Ngày sinh:</strong> {dob}</div>
-                    <div style="flex:1;"><strong>🆔 CCCD:</strong> {cccd}</div>
-                </div>
-
-                <div class="section-title"><i class="fa-solid fa-graduation-cap"></i> Học vấn & Bằng cấp</div>
-                <p><strong>🎓 Trình độ:</strong> {education}</p>
-                <p><strong>📜 Chứng chỉ:</strong> {degrees}</p>
-
-                <div class="section-title"><i class="fa-solid fa-star"></i> Kỹ năng chuyên môn</div>
-                <div style="margin-bottom:15px;">
-                    {skills_html}
-                </div>
-
-                <div class="section-title"><i class="fa-solid fa-quote-left"></i> Giới thiệu bản thân</div>
-                <div style="background:#f8fafc; padding:15px; border-radius:6px; font-style:italic; color:#475569; border-left:4px solid #cbd5e1;">
-                    "{escape(about)}"
+        <div class="job-card">
+            <div class="cv-container">
+                <div class="cv-left">
+                    <img src="https://ui-avatars.com/api/?name={escape(student.fullName)}&size=128&background=random&color=fff&rounded=true" 
+                         style="border-radius:50%; margin-bottom:15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" alt="Avatar">
+                    
+                    <h2 style="color:#1e40af; margin-bottom:5px;">{escape(student.fullName)}</h2>
+                    <p style="color:#64748b; font-weight:bold; margin-top:0;">{escape(student.major or 'Chưa có ngành')}</p>
+                    
+                    <hr style="border:0; border-top:1px solid #e2e8f0; margin: 20px 0;">
+                    
+                    <p style="font-size:13px; color:#64748b;">Vị trí ứng tuyển</p>
+                    <p style="font-weight:bold; color:#0f172a;">{escape(app_item.job.title)}</p>
+                    
+                    <div style="margin-top:30px;">
+                        <a href="{cv_url}" target="_blank">
+                            <button style="background:#dc2626; margin-bottom:10px;">
+                                <i class="fa-solid fa-file-pdf"></i> Xem CV Gốc (PDF)
+                            </button>
+                        </a>
+                        {f'<a href="{portfolio_url}" target="_blank"><button style="background:#334155;"><i class="fa-solid fa-globe"></i> Xem Portfolio</button></a>' if portfolio_url else ''}
+                    </div>
                 </div>
 
-                <div style="margin-top:30px; text-align:right;">
-                     <a href="/company/applications/{app_id}/evaluate">
-                        <button style="width:auto; padding:10px 20px; background:#16a34a;">
-                            <i class="fa-solid fa-check-to-slot"></i> Đánh giá / Phỏng vấn
-                        </button>
-                     </a>
+                <div class="cv-right">
+                    <div class="section-title"><i class="fa-solid fa-user"></i> Thông tin cá nhân</div>
+                    <div style="display:flex; gap:20px; margin-bottom:15px;">
+                        <div style="flex:1;"><strong>📅 Ngày sinh:</strong> {dob}</div>
+                        <div style="flex:1;"><strong>🆔 CCCD:</strong> {escape(cccd)}</div>
+                    </div>
+
+                    <div class="section-title"><i class="fa-solid fa-graduation-cap"></i> Học vấn & Bằng cấp</div>
+                    <p><strong>🎓 Trình độ:</strong> {escape(edu_level)}</p>
+                    <p><strong>📜 Chứng chỉ:</strong> {escape(degrees)}</p>
+
+                    <div class="section-title"><i class="fa-solid fa-star"></i> Kỹ năng chuyên môn</div>
+                    <div style="margin-bottom:15px;">
+                        {skills_html}
+                    </div>
+
+                    <div class="section-title"><i class="fa-solid fa-quote-left"></i> Giới thiệu bản thân</div>
+                    <div style="background:#f8fafc; padding:15px; border-radius:6px; font-style:italic; color:#475569; border-left:4px solid #cbd5e1;">
+                        "{escape(about)}"
+                    </div>
+
+                    <div style="margin-top:30px; text-align:right;">
+                         <a href="/company/applications/{app_id}/evaluate">
+                            <button style="width:auto; padding:10px 20px; background:#16a34a;">
+                                <i class="fa-solid fa-check-to-slot"></i> Đánh giá / Phỏng vấn
+                            </button>
+                         </a>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
-    """
+        """
 
-    return wrap_layout(content)
+        return wrap_layout(content)
+
+    except Exception as e:
+        print(f"Error viewing CV: {e}")
+        return wrap_layout(f"<h3>❌ Lỗi hệ thống: {str(e)}</h3>")

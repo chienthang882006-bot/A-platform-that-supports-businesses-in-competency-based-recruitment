@@ -79,19 +79,17 @@ def get_company_profile(user_id):
     if not company:
         return jsonify({"detail": "Company not found"}), 404
 
-    profile = db_session.query(CompanyProfile)\
-        .filter(CompanyProfile.companyId == company.id)\
-        .first()
+    profile = db_session.query(CompanyProfile).filter(CompanyProfile.companyId == company.id).first()
 
     return jsonify({
         "id": company.id,
         "companyName": company.companyName,
-        "description": profile.description if profile else "",
-        "website": profile.website if profile else "",
-        "address": profile.address if profile else "",
-        "industry": profile.industry if profile else "",
-        "size": profile.size if profile else "",
-        "logoUrl": profile.logoUrl if profile else ""
+        "description": (profile.description or "") if profile else "",
+        "website": (profile.website or "") if profile else "",
+        "address": (profile.address or "") if profile else "",
+        "industry": (profile.industry or "") if profile else "",
+        "size": (profile.size or "") if profile else "",
+        "logoUrl": (profile.logoUrl or "") if profile else ""
     })
 
 
@@ -107,25 +105,29 @@ def update_company_profile(company_id):
 
     data = request.json
     try:
+        # Query lại object company để đảm bảo session context
         company = db_session.query(Company).filter(Company.id == company_id).first()
         if not company:
             return jsonify({"detail": "Company not found"}), 404
 
-        # Update Company Name
+        # 1. Update Company Name
         if "companyName" in data:
             company.companyName = data["companyName"]
 
-        # Update or Create Profile
+        # 2. Update or Create Profile
         profile = db_session.query(CompanyProfile).filter(CompanyProfile.companyId == company.id).first()
         if not profile:
             profile = CompanyProfile(companyId=company.id)
             db_session.add(profile)
+            db_session.flush() # Đẩy ID vào session ngay lập tức
         
-        # Mapping fields
+        # 3. Mapping fields - FIX: Chuyển đổi None thành "" để tránh lỗi NULL DB nếu muốn
         fields = ["description", "website", "address", "industry", "size", "logoUrl"]
         for field in fields:
             if field in data:
-                setattr(profile, field, data[field])
+                val = data[field]
+                # Nếu val là None thì lưu chuỗi rỗng, ngược lại lưu giá trị gốc
+                setattr(profile, field, val if val is not None else "")
 
         db_session.commit()
         return jsonify({"message": "Cập nhật hồ sơ công ty thành công"})

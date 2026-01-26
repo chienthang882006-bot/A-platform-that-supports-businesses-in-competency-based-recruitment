@@ -75,7 +75,8 @@ talisman.init_app(
     },
 )
 
-login_manager.login_view = "auth_view.login"
+# set login view using setattr to satisfy type checkers
+setattr(login_manager, "login_view", "auth_view.login")
 login_manager.login_message = "Vui lòng đăng nhập để tiếp tục"
 
 # REGISTER API ROUTERS
@@ -115,3 +116,5 @@ if __name__ == "__main__":
     init_db()
     print("🚀 Server đang chạy tại: http://127.0.0.1:8001")
     app.run(debug=True, port=8001)
+
+
