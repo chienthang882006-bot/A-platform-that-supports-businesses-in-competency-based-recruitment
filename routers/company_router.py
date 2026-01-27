@@ -54,7 +54,7 @@ def get_company_by_user(user_id):
     auth = require_company()
     if auth: return auth
 
-    if get_jwt_identity() != user_id:
+    if str(get_jwt_identity()) != str(user_id):
         return jsonify({"detail": "Forbidden"}), 403
 
     company = db_session.query(Company).filter(Company.userId == user_id).first()
@@ -69,7 +69,7 @@ def get_company_profile(user_id):
     if auth:
         return auth
 
-    if get_jwt_identity() != user_id:
+    if str(get_jwt_identity()) != str(user_id):
         return jsonify({"detail": "Forbidden"}), 403
 
     company = db_session.query(Company)\
@@ -100,7 +100,7 @@ def update_company_profile(company_id):
     if auth: return auth
     
     company = get_current_company()
-    if not company or company.id != company_id:
+    if company is None or company.id != company_id:
         return jsonify({"detail": "Forbidden"}), 403
 
     data = request.json
@@ -144,7 +144,7 @@ def get_jobs_by_company(company_id):
     if auth: return auth
 
     company = get_current_company()
-    if company.id != company_id:
+    if company is None or company.id != company_id:
         return jsonify({"detail": "Forbidden"}), 403
 
     """Lấy danh sách việc làm và đếm số lượng ứng tuyển."""
@@ -165,6 +165,7 @@ def get_jobs_by_company(company_id):
             "maxApplicants": job.maxApplicants
         })
     return jsonify(response)
+
 
 @company_bp.route("/jobs/<int:job_id>", methods=["GET"])
 @jwt_required()
@@ -278,13 +279,19 @@ def update_job(job_id):
     job = db_session.query(Job).filter(Job.id == job_id).first()
     company = get_current_company()
 
-    if not job or job.companyId != company.id:
+    if job is None:
+        return jsonify({"detail": "Job not found"}), 404
+    if company is None or getattr(job, "companyId", None) != getattr(company, "id", None):
         return jsonify({"detail": "Forbidden"}), 403
 
-    data = request.get_json(silent=True) or request.form
+    data = request.get_json(silent=True)
+    if not data:
+        data = request.form
+
+
     if not data:
         return jsonify({"detail": "No data provided"}), 400
-
+    
     try:
         # 1. Update Basic Info
         if "title" in data: setattr(job, "title", str(data["title"]))
@@ -468,10 +475,10 @@ def get_application_test_detail(app_id):
     app = db_session.query(Application).filter(Application.id == app_id).first()
     company = get_current_company()
 
-    if not app or app.job.companyId != company.id:
+    if app is None:
+        return jsonify({"detail": "App not found"}), 404
+    if company is None or getattr(getattr(app, "job", None), "companyId", None) != getattr(company, "id", None):
         return jsonify({"detail": "Forbidden"}), 403
-
-    if not app: return jsonify({"detail": "App not found"}), 404
 
     # Lấy bài test đầu tiên của job
     test = app.job.skill_tests[0] if app.job.skill_tests else None
@@ -515,10 +522,10 @@ def company_view_candidate_cv(app_id):
     app = db_session.query(Application).filter(Application.id == app_id).first()
     company = get_current_company()
 
-    if not app or app.job.companyId != company.id:
+    if app is None:
+        return jsonify({"detail": "Application not found"}), 404
+    if company is None or getattr(getattr(app, "job", None), "companyId", None) != getattr(company, "id", None):
         return jsonify({"detail": "Forbidden"}), 403
-
-    if not app: return jsonify({"detail": "Application not found"}), 404
 
     student = app.student
     profile = student.profile
@@ -634,3 +641,43 @@ def evaluate_application(app_id):
         db_session.rollback()
         print(f"Evaluate Error: {e}")
         return jsonify({"detail": f"Lỗi xử lý: {str(e)}"}), 500
+    
+
+# [FILE: company_router.py] - Thêm vào cuối file hoặc trong nhóm Job Routes
+
+@company_bp.route("/jobs/<int:job_id>/test-info", methods=["GET"])
+@jwt_required()
+def get_job_test_info(job_id):
+    """API trả về thông tin bài test và câu hỏi để fill vào form Edit"""
+    auth = require_company()
+    if auth: return auth
+    
+    # Check quyền sở hữu Job
+    job = db_session.query(Job).filter(Job.id == job_id).first()
+    company = get_current_company()
+    if not job:
+        return jsonify({"detail": "Job not found"}), 404
+    if company is None or job.companyId != company.id:
+        return jsonify({"detail": "Forbidden"}), 403
+
+    # Lấy bài test
+    test = db_session.query(SkillTest).filter(SkillTest.jobId == job_id).first()
+    
+    if not test:
+        # Trả về null nếu không có test, frontend sẽ tự hiểu
+        return jsonify(None) 
+    
+    # Lấy danh sách câu hỏi
+    questions = db_session.query(Question).filter(Question.testId == test.id).all()
+    questions_list = [
+        {"content": q.content, "options": q.options, "correctAnswer": q.correctAnswer} 
+        for q in questions
+    ]
+    
+    return jsonify({
+        "id": test.id,
+        "testName": test.testName,
+        "duration": test.duration,
+        "totalScore": test.totalScore,
+        "questions": questions_list
+    })

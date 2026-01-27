@@ -230,13 +230,14 @@ def company_jobs():
     user = require_company_view()
     if not user:
         return redirect('/login')
-
+    db_session.remove()
     user_id = user["id"]
     content = "<h2>📄 Tin tuyển dụng của công ty</h2>"
 
     try:
         # FIX: Truy vấn trực tiếp DB thay vì gọi API để tránh lỗi
         # 1. Lấy thông tin công ty
+        db_session.expire_all()  # Đảm bảo lấy dữ liệu mới nhất
         company = db_session.query(Company).filter(Company.userId == user_id).first()
         
         # Nếu chưa có công ty -> Hiển thị thông báo và nút tạo hồ sơ
@@ -432,129 +433,205 @@ def company_create_job():
 
 @company_view_bp.route('/company/jobs/<int:job_id>/edit', methods=['GET', 'POST'])
 def company_edit_job(job_id):
-
+    # 1. Setup CSRF Token
     csrf_token = request.cookies.get("csrf_token")
     if not csrf_token:
         csrf_token = secrets.token_hex(16)
 
+    # 2. Validate CSRF khi POST
     if request.method == "POST":
         if not validate_csrf(request.form.get("csrf_token")):
             return wrap_layout("<h3 style='color:red'>❌ CSRF token không hợp lệ</h3>")
 
+    # 3. Kiểm tra quyền đăng nhập
     user = require_company_view()
     if not user:
         return redirect('/login')
 
     user_id = user["id"]   
-
     message = ""    
-    try:
-        comp = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers()).json()
-        company_id = comp['id']
-        job_res = requests.get(f"{API_URL}/jobs/{job_id}", headers=auth_headers())
-        if job_res.status_code != 200: return wrap_layout("<h2>❌ Không tìm thấy Job</h2>")
-        job = job_res.json()
-        if job.get('companyId') != company_id: return wrap_layout("<h2>⛔ Bạn không có quyền</h2>")        
-        test_res = requests.get(f"{API_URL}/jobs/{job_id}/tests", headers=auth_headers())
-        tests = test_res.json() if test_res.status_code == 200 else []
-        current_test = tests[0] if tests else None
-        test_questions = []
-        if current_test:
-             q_res = requests.get(f"{API_URL}/tests/{current_test['id']}", headers=auth_headers())
-             if q_res.status_code == 200: test_questions = q_res.json().get('questions', [])
-    except Exception as e:
-        return wrap_layout(f"<h2>Lỗi tải dữ liệu: {e}</h2>")
+
+    # --- PHẦN 1: XỬ LÝ LƯU DỮ LIỆU (POST) ---
+    # (Đoạn này bị thiếu trong file cũ của bạn)
     if request.method == 'POST':
         try:
+            # Chuẩn bị dữ liệu gửi lên API
             payload = {
-                "companyId": company_id,
                 "title": request.form['title'],
                 "description": request.form['description'],
                 "location": request.form['location'],
-                "maxApplicants": int(request.form.get("maxApplicants") or 0)
+                "maxApplicants": int(request.form.get("maxApplicants") or 0),
+                "status": "open" 
             }
+
+            # Xử lý bài Test (nếu có)
             if request.form.get('has_test') == 'on':
                 q_contents = request.form.getlist('q_content[]')
                 questions_list = []
                 for c in q_contents:
-                    if c.strip(): questions_list.append({"content": c, "options": "", "correctAnswer": ""})
+                    if c.strip():
+                        questions_list.append({
+                            "content": c.strip(), 
+                            "options": "", 
+                            "correctAnswer": ""
+                        })
+                
                 payload["test"] = {
                     "testName": request.form['testName'],
                     "duration": int(request.form['duration'] or 30),
                     "totalScore": int(request.form['totalScore'] or 100),
                     "questions": questions_list
                 }
+            
+            # Gọi API cập nhật (PUT)
+            # Lưu ý: requests.put sẽ tự động dùng 'Content-Type: application/json' khi dùng tham số json=...
             res = requests.put(f"{API_URL}/jobs/{job_id}", json=payload, headers=auth_headers())
-            if res.status_code == 200: return redirect('/company/jobs')
-            else: message = f"Lưu thất bại: {res.text}"
+            
+            if res.status_code == 200:
+                # Xóa cache session cũ để trang danh sách cập nhật ngay
+                db_session.remove() 
+                return redirect('/company/jobs')
+            else:
+                message = f"<span style='color:red'>❌ Lưu thất bại: {res.text}</span>"
+        
         except Exception as e:
-            message = "Không thể xử lý yêu cầu. Vui lòng thử lại sau."
+            print(f"Error saving job: {e}")
+            message = f"<span style='color:red'>❌ Lỗi hệ thống: {str(e)}</span>"
 
+    # --- PHẦN 2: LẤY DỮ LIỆU ĐỂ HIỂN THỊ (GET) ---
+    db_session.expire_all()
+    current_test = None
+    test_questions = []
+    job = {}
+    
+    try:
+        # A. Lấy thông tin Company để check quyền
+        comp_res = requests.get(f"{API_URL}/companies/user/{user_id}", headers=auth_headers())
+        if comp_res.status_code != 200:
+             return wrap_layout(f"<h2>❌ Lỗi: Không lấy được thông tin công ty (Code {comp_res.status_code})</h2>")
+        
+        comp = comp_res.json()
+        company_id = comp.get('id')
+        
+        # B. Lấy thông tin Job
+        job_res = requests.get(f"{API_URL}/jobs/{job_id}", headers=auth_headers())
+        if job_res.status_code != 200: 
+            return wrap_layout("<h2>❌ Không tìm thấy Job</h2>")
+        
+        job = job_res.json()
+        if job.get('companyId') != company_id: 
+            return wrap_layout("<h2>⛔ Bạn không có quyền chỉnh sửa Job này</h2>")        
+        
+        # C. Lấy thông tin bài Test (Dùng API /test-info mới)
+        test_res = requests.get(f"{API_URL}/jobs/{job_id}/test-info", headers=auth_headers())
+        if test_res.status_code == 200 and test_res.content:
+            data = test_res.json()
+            if data:
+                current_test = data
+                test_questions = data.get('questions', [])
+
+    except Exception as e:
+        print(f"Edit Job View Error: {e}")
+        return wrap_layout(f"<h2>Lỗi tải dữ liệu: {str(e)}</h2>")
+
+    # --- PHẦN 3: RENDER GIAO DIỆN ---
     questions_json = json.dumps(test_questions) if current_test else "[]"
     has_test_checked = "checked" if current_test else ""
     display_test_form = "block" if current_test else "none"
 
     html = f"""
     <h2>✏️ Chỉnh sửa tin tuyển dụng</h2>
-    <p style="color:red">{message}</p>
+    <p>{message}</p>
     <a href="/company/jobs">← Quay lại danh sách</a>
+    
     <form method="post" style="margin-top:20px;">
+        <input type="hidden" name="csrf_token" value="{csrf_token}">
+        
         <div class="job-card">
             <h3>Thông tin công việc</h3>
-            <label>Tiêu đề</label><input name="title" required value="{job['title']}">
-            <label>Mô tả</label><textarea name="description" required style="min-height:120px;">{job['description']}</textarea>
-            <label>Địa điểm</label><input name="location" value="{job.get('location', '')}">
+            <label>Tiêu đề</label>
+            <input name="title" required value="{escape(job.get('title', ''))}">
+            
+            <label>Mô tả</label>
+            <textarea name="description" required style="min-height:120px;">{escape(job.get('description', ''))}</textarea>
+            
+            <label>Địa điểm</label>
+            <input name="location" value="{escape(job.get('location', ''))}">
+            
             <label>Số ứng viên tối đa</label>
             <input name="maxApplicants" type="number" min="1" value="{job.get('maxApplicants', 0)}">
         </div>
+
         <div class="job-card" style="border-left: 6px solid #2563eb; background:#f0f9ff;">
             <label style="display:flex; align-items:center; cursor:pointer; color:#2563eb; margin-bottom:15px;">
-                <input type="checkbox" name="has_test" id="chkTest" onclick="toggleTestForm()" {has_test_checked} style="width:auto; margin-right:10px;"><b>Kèm bài kiểm tra năng lực (Tự luận)?</b>
+                <input type="checkbox" name="has_test" id="chkTest" onclick="toggleTestForm()" {has_test_checked} style="width:auto; margin-right:10px;">
+                <b>Kèm bài kiểm tra năng lực (Tự luận)?</b>
             </label>
+            
             <div id="test-form" style="display:{display_test_form};">
-                <label>Tên bài kiểm tra</label><input name="testName" value="{current_test.get('testName', '') if current_test else ''}">
+                <label>Tên bài kiểm tra</label>
+                <input name="testName" value="{escape(current_test.get('testName', '') if current_test else '')}">
+                
                 <div style="display:flex; gap:15px;">
-                    <div style="flex:1;"><label>Thời gian</label><input type="number" name="duration" value="{current_test.get('duration', 30) if current_test else 30}"></div>
-                    <div style="flex:1;"><label>Tổng điểm</label><input type="number" name="totalScore" value="{current_test.get('totalScore', 100) if current_test else 100}"></div>
+                    <div style="flex:1;">
+                        <label>Thời gian (phút)</label>
+                        <input type="number" name="duration" value="{current_test.get('duration', 30) if current_test else 30}">
+                    </div>
+                    <div style="flex:1;">
+                        <label>Tổng điểm</label>
+                        <input type="number" name="totalScore" value="{current_test.get('totalScore', 100) if current_test else 100}">
+                    </div>
                 </div>
+
                 <h4 style="margin-top:20px;">Danh sách câu hỏi :</h4>
                 <div id="questions-container"></div>
                 <button type="button" onclick="addQuestionInput()" style="background:#475569; margin-top:15px; width:auto; padding:8px 15px; font-size:13px;">+ Thêm câu hỏi</button>
             </div>
         </div>
+
         <button style="margin-top:20px; padding:12px; font-size:16px; background:#f59e0b;">💾 Lưu thay đổi</button>
     </form>
+
     <script>
         var existingQuestions = {questions_json};
+        
         function toggleTestForm() {{
             var chk = document.getElementById("chkTest");
             document.getElementById("test-form").style.display = chk.checked ? "block" : "none";
         }}
+        
         function addQuestionInput(content='') {{
             var container = document.getElementById("questions-container");
             var div = document.createElement("div");
             div.style.marginBottom = "15px"; div.style.padding = "15px"; div.style.background = "white"; div.style.border = "1px solid #cbd5e1";
-            div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:8px;">Câu hỏi </div>
+            div.innerHTML = `<div style="font-weight:bold; font-size:13px; margin-bottom:8px;">Câu hỏi</div>
             <textarea name="q_content[]" placeholder="Nội dung câu hỏi..." required style="margin-bottom:8px; width:100%;" rows="3">${{content}}</textarea>
             <button type="button" onclick="this.parentElement.remove()" style="background:#ef4444; width:auto; padding:4px 10px; font-size:11px; margin-top:5px;">Xóa</button>`;
             container.appendChild(div);
         }}
+        
         window.onload = function() {{
-            if (existingQuestions.length > 0) {{ existingQuestions.forEach(q => {{ addQuestionInput(q.content.replace(/"/g, '&quot;')); }}); }}
-            else if (document.getElementById("chkTest").checked) {{ addQuestionInput(); }}
+            if (existingQuestions.length > 0) {{ 
+                existingQuestions.forEach(q => {{ 
+                    // Escape ký tự đặc biệt để tránh lỗi JS
+                    var safeContent = q.content.replace(/&/g, "&amp;")
+                                               .replace(/</g, "&lt;")
+                                               .replace(/>/g, "&gt;")
+                                               .replace(/"/g, "&quot;")
+                                               .replace(/'/g, "&#039;");
+                    addQuestionInput(safeContent); 
+                }}); 
+            }}
+            else if (document.getElementById("chkTest").checked) {{ 
+                addQuestionInput(); 
+            }}
         }};
     </script>
     """
+    
     resp = make_response(wrap_layout(html))
-    resp.set_cookie(
-        "csrf_token",
-        csrf_token,
-        httponly=True,
-        samesite="Lax",
-        secure=request.is_secure
-    )
+    resp.set_cookie("csrf_token", csrf_token, httponly=True, samesite="Lax", secure=request.is_secure)
     return resp
-
 
 @company_view_bp.route('/company/applications')
 def company_applications():
