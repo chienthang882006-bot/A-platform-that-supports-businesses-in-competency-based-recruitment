@@ -38,7 +38,8 @@ def get_student_by_user(user_id):
         "id": student.id,
         "userId": student.userId,
         "fullName": student.fullName,
-        "dob": student.dob.isoformat() if student.dob else None,
+        "cccd": student.cccd,
+        "dob": student.dob.isoformat() if student.dob is not None else None,
         "major": student.major,
         "skills": [
             {"name": ss.skill.name, "level": ss.level} for ss in student.skills
@@ -108,7 +109,12 @@ def update_student(student_id):
         student.major = data["major"]
     if "cccd" in data:
         student.cccd = data["cccd"]
-
+    if "dob" in data and data["dob"]:
+        try:
+            # Chuyển chuỗi '2000-01-01' thành đối tượng datetime (keeps time component for DB column)
+            student.dob = datetime.strptime(data["dob"], "%Y-%m-%d")
+        except ValueError:
+            pass # Bỏ qua nếu định dạng ngày sai
     if not student.profile:
         student.profile = StudentProfile(studentId=student.id)
 

@@ -6,7 +6,20 @@ from markupsafe import escape
 
 student_view_bp = Blueprint('student_view', __name__)
 
-
+def is_profile_complete(student_data):
+    """
+    Kiểm tra xem sinh viên đã điền đủ thông tin quan trọng chưa.
+    Các trường bắt buộc: fullName, cccd, major, và link CV (cvUrl) trong profile.
+    """
+    if not student_data.get("fullName"): return False
+    if not student_data.get("cccd"): return False
+    if not student_data.get("major"): return False
+    
+    profile = student_data.get("profile")
+    if not profile: return False
+    if not profile.get("cvUrl"): return False
+    
+    return True
 def require_student_view():
     user = get_current_user_from_jwt()
     if not user:
@@ -122,7 +135,45 @@ def apply(job_id):
         return redirect('/login')
 
     user_id = user["id"]
-    stu = requests.get(f"{API_URL}/students/user/{user_id}", headers=auth_headers()).json()
+    
+    # 1. Lấy thông tin sinh viên từ API
+    stu_res = requests.get(f"{API_URL}/students/user/{user_id}", headers=auth_headers())
+    
+    if stu_res.status_code != 200:
+        return redirect("/student/home?msg=❌+Lỗi+kết+nối+dữ+liệu+sinh+viên")
+
+    stu = stu_res.json()
+
+    # ==================================================================
+    # 2. KIỂM TRA HỒ SƠ ĐẦY ĐỦ (LOGIC MỚI)
+    # ==================================================================
+    # Các trường bắt buộc phải có giá trị
+    required_fields = {
+        "fullName": "Họ tên",
+        "cccd": "CCCD",
+        "major": "Ngành học"
+    }
+    
+    missing = []
+    
+    # Kiểm tra các trường cơ bản (Level 1)
+    for field, label in required_fields.items():
+        if not stu.get(field):
+            missing.append(label)
+
+    # Kiểm tra Profile và CV (Level 2 - nằm trong object 'profile')
+    profile = stu.get("profile")
+    if not profile or not profile.get("cvUrl"):
+        missing.append("Link CV")
+
+    # Nếu thiếu thông tin -> Chặn và đẩy về trang Profile
+    if missing:
+        missing_str = ", ".join(missing)
+        msg = f"⚠️ Bạn cần cập nhật: {missing_str} trước khi ứng tuyển!"
+        return redirect(f"/student/profile?msg={msg}")
+    # ==================================================================
+
+    # 3. Nếu hồ sơ OK -> Tiếp tục quy trình ứng tuyển cũ
     student_id = stu["id"]
     res = requests.post(
         f"{API_URL}/apply/",
@@ -142,20 +193,26 @@ def apply(job_id):
     return redirect("/student/home")
 
 
+# Trong file student_view.py
+
 @student_view_bp.route("/student/profile", methods=["GET", "POST"])
 def student_profile():
     
     csrf_token = generate_csrf_token()
 
-    if request.method == "POST":
-        if not validate_csrf(request.form.get("csrf_token")):
-            return "CSRF token không hợp lệ", 400
+    # 1. Hiển thị thông báo từ URL (nếu có)
+    msg_from_url = request.args.get("msg", "")
+    message = ""
+    if msg_from_url:
+        message = f"<p style='color:#d97706; font-weight:bold; border:1px solid #d97706; padding:10px; background:#fffbeb;'>{msg_from_url}</p>"
 
     user = require_student_view()
     if not user:
         return redirect('/login')
 
     user_id = user["id"]
+    
+    # 2. Lấy thông tin sinh viên hiện tại
     stu_res = requests.get(
         f"{API_URL}/students/user/{user_id}",
         headers=auth_headers(),
@@ -168,11 +225,12 @@ def student_profile():
     student = stu_res.json()
     student_id = student["id"]
     profile = student.get("profile") or {}
-    skills = student.get("skills", [])
-    skills_text = ", ".join([f"{s['name']}:{s['level']}" for s in skills])
-    message = ""
     
+    # 3. XỬ LÝ LƯU (POST)
     if request.method == "POST":
+        if not validate_csrf(request.form.get("csrf_token")):
+            return "CSRF token không hợp lệ", 400
+
         skills_raw = request.form.get("skills", "")
         skills_list = []
         for item in skills_raw.split(","):
@@ -182,10 +240,13 @@ def student_profile():
                     "name": name.strip(),
                     "level": int(level.strip())
                 })
-                
+        
+        # Payload gửi lên API
         payload = {
             "fullName": request.form.get("fullName"),
             "major": request.form.get("major"),
+            "cccd": request.form.get("cccd"),  # <--- Nhận CCCD
+            "dob": request.form.get("dob"),    # <--- Nhận Ngày sinh
             "about": request.form.get("about"),
             "educationLevel": request.form.get("educationLevel"),
             "degrees": request.form.get("degrees"),
@@ -200,49 +261,73 @@ def student_profile():
             headers=auth_headers()
         )
         if res.status_code == 200:
-            message = "<p style='color:green;'>✅ Hồ sơ đã được lưu</p>"
+            message = "<p style='color:green; font-weight:bold;'>✅ Hồ sơ đã được lưu thành công</p>"
+            # Load lại data mới nhất để hiển thị
             student = requests.get(f"{API_URL}/students/user/{user_id}").json()
             profile = student.get("profile") or {}
-            skills = student.get("skills", [])
-            skills_text = ", ".join([f"{s['name']}:{s['level']}" for s in skills])
         else:
             message = "<p style='color:red;'>❌ Lưu hồ sơ thất bại</p>"
+
+    # 4. CHUẨN BỊ DỮ LIỆU HIỂN THỊ
+    skills = student.get("skills", [])
+    skills_text = ", ".join([f"{s['name']}:{s['level']}" for s in skills])
+    
+    # Xử lý hiển thị CCCD (tránh hiện chữ None)
+    cccd_val = student.get('cccd')
+    if cccd_val is None or str(cccd_val) == "None": 
+        cccd_val = ""
+        
+    # Xử lý hiển thị Ngày sinh (cắt chuỗi ISO '2000-01-01T00:00:00' -> '2000-01-01')
+    dob_raw = student.get('dob') 
+    dob_val = dob_raw[:10] if dob_raw else "" 
 
     content = f"""
     <h2>👤 Thông tin cá nhân</h2>
     {message}
     <form method="post">
         <input type="hidden" name="csrf_token" value="{csrf_token}">
-        <label>Họ tên</label>
-        <input name="fullName" value="{student.get('fullName','')}">
-        <label>Ngành học</label>
-        <input name="major" value="{student.get('major','')}">
+        
+        <label>Họ tên <span style="color:red">*</span></label>
+        <input name="fullName" value="{student.get('fullName','') or ''}" required>
+
+        <div style="display:flex; gap:20px;">
+            <div style="flex:1;">
+                <label>Ngày sinh <span style="color:red">*</span></label>
+                <input type="date" name="dob" value="{dob_val}" required>
+            </div>
+            <div style="flex:1;">
+                <label>Số CCCD / CMND <span style="color:red">*</span></label>
+                <input name="cccd" value="{cccd_val}" placeholder="Nhập số CCCD..." required>
+            </div>
+        </div>
+        <label>Ngành học <span style="color:red">*</span></label>
+        <input name="major" value="{student.get('major','') or ''}" required>
+        
         <label>Giới thiệu bản thân</label>
-        <textarea name="about" rows="3">{profile.get('about','')}</textarea>
+        <textarea name="about" rows="3">{profile.get('about','') or ''}</textarea>
+        
         <label>Trình độ học vấn </label>
-        <input name="educationLevel" value="{profile.get('educationLevel','')}">
+        <input name="educationLevel" value="{profile.get('educationLevel','') or ''}">
+        
         <label>Bằng cấp / Chứng chỉ</label>
-        <input name="degrees" value="{profile.get('degrees','')}">
-        <label>Link CV (PDF/Drive)</label>
-        <input name="cvUrl" value="{profile.get('cvUrl','')}">
+        <input name="degrees" value="{profile.get('degrees','') or ''}">
+        
+        <label>Link CV (PDF/Drive) <span style="color:red">*</span></label>
+        <input name="cvUrl" value="{profile.get('cvUrl','') or ''}" required>
+        
         <label>Link Portfolio</label>
-        <input name="portfolioUrl" value="{profile.get('portfolioUrl','')}">
+        <input name="portfolioUrl" value="{profile.get('portfolioUrl','') or ''}">
+        
         <label>Kỹ năng (Định dạng: Tên:Level, VD: Python:5, Java:4)</label>
         <input name="skills" value="{skills_text}">
-        <button>💾 Lưu hồ sơ</button>
+        
+        <button style="margin-top:20px;">💾 Lưu hồ sơ</button>
     </form>
     """
     
     resp = make_response(wrap_layout(content))
-    resp.set_cookie(
-        "csrf_token",
-        csrf_token,
-        httponly=True,
-        samesite="Lax",
-        secure=request.is_secure
-    )
+    resp.set_cookie("csrf_token", csrf_token, httponly=True, samesite="Lax")
     return resp
-
 
 @student_view_bp.route('/student/applications')
 def student_applications():
@@ -346,7 +431,43 @@ def student_tests(job_id):
         return redirect('/login')
     
     user_id = user["id"]
-    stu = requests.get(f"{API_URL}/students/user/{user_id}", headers=auth_headers()).json()
+    
+    # 1. Lấy thông tin sinh viên
+    stu_res = requests.get(f"{API_URL}/students/user/{user_id}", headers=auth_headers())
+    if stu_res.status_code != 200:
+        return redirect("/student/home?msg=❌+Lỗi+kết+nối+dữ+liệu+sinh+viên")
+        
+    stu = stu_res.json()
+
+    # ==================================================================
+    # 2. KIỂM TRA HỒ SƠ ĐẦY ĐỦ (BẮT BUỘC TRƯỚC KHI TEST)
+    # ==================================================================
+    required_fields = {
+        "fullName": "Họ tên",
+        "cccd": "CCCD",
+        "major": "Ngành học"
+    }
+    
+    missing = []
+    
+    # Kiểm tra thông tin cơ bản
+    for field, label in required_fields.items():
+        if not stu.get(field):
+            missing.append(label)
+
+    # Kiểm tra CV trong profile
+    profile = stu.get("profile")
+    if not profile or not profile.get("cvUrl"):
+        missing.append("Link CV")
+
+    # Nếu thiếu -> Chặn và đẩy về trang Profile
+    if missing:
+        missing_str = ", ".join(missing)
+        msg = f"⚠️ Bạn cần cập nhật: {missing_str} để bắt đầu làm bài test!"
+        return redirect(f"/student/profile?msg={msg}")
+    # ==================================================================
+
+    # 3. Hồ sơ OK -> Tiếp tục vào làm bài test
     student_id = stu["id"]
     start_res = requests.post(
         f"{API_URL}/tests/start",
@@ -356,6 +477,7 @@ def student_tests(job_id):
     if start_res.status_code in [200, 201]:
         test_id = start_res.json()["testId"]
         return redirect(f"/student/test/{test_id}")
+        
     return redirect("/student/home")
 
 @student_view_bp.route("/student/test/<int:test_id>")
@@ -369,19 +491,58 @@ def student_do_test(test_id):
 
     user_id = user["id"]
 
+    # 1. Lấy thông tin sinh viên
     stu_res = requests.get(
         f"{API_URL}/students/user/{user_id}",
         headers=auth_headers(),
         timeout=5
     )
     if stu_res.status_code != 200:
-        return wrap_layout("<p>❌ Không tìm thấy sinh viên</p>")
+        return wrap_layout("<p>❌ Không tìm thấy thông tin sinh viên</p>")
 
-    student_id = stu_res.json()["id"]
+    student = stu_res.json()
+    student_id = student["id"]
 
-    res = requests.get(f"{API_URL}/tests/{test_id}",headers=auth_headers())
+    # ==================================================================
+    # 2. KIỂM TRA HỒ SƠ (BẮT BUỘC TRƯỚC KHI VÀO TRANG LÀM BÀI)
+    # ==================================================================
+    # Danh sách các trường cần kiểm tra
+    # Lưu ý: API trả về None thì Python hiểu là None, nhưng khi hiển thị lên form có thể là chuỗi "None"
+    # nên ta cần check kỹ cả 2 trường hợp.
+    
+    missing = []
+    
+    # Check Họ tên
+    full_name = student.get("fullName")
+    if not full_name or str(full_name).strip() == "" or str(full_name) == "None":
+        missing.append("Họ tên")
+
+    # Check CCCD
+    cccd = student.get("cccd")
+    if not cccd or str(cccd).strip() == "" or str(cccd) == "None":
+        missing.append("CCCD")
+
+    # Check Ngành học
+    major = student.get("major")
+    if not major or str(major).strip() == "" or str(major) == "None" or major == "Chưa cập nhật":
+        missing.append("Ngành học")
+
+    # Check Link CV (nằm trong profile)
+    profile = student.get("profile")
+    cv_url = profile.get("cvUrl") if profile else None
+    if not cv_url or str(cv_url).strip() == "" or str(cv_url) == "None":
+        missing.append("Link CV")
+
+    # Nếu thiếu thông tin -> Đuổi về trang hồ sơ ngay
+    if missing:
+        msg = "Vui lòng nhập thông tin trước khi làm test: " + ", ".join(missing)
+        return redirect(f"/student/profile?msg={msg}")
+    # ==================================================================
+
+    # 3. Nếu hồ sơ đủ -> Lấy đề thi hiển thị bình thường
+    res = requests.get(f"{API_URL}/tests/{test_id}", headers=auth_headers())
     if res.status_code != 200:
-        return wrap_layout("<p>❌ Không tìm thấy bài test</p>")
+        return wrap_layout("<p>❌ Không tìm thấy bài test hoặc bạn không có quyền truy cập</p>")
 
     test = res.json()
     questions_html = ""
@@ -392,6 +553,7 @@ def student_do_test(test_id):
             <textarea name="answer_{q['id']}" placeholder="Nhập câu trả lời tự luận của bạn..." required rows="5" style="width:100%; margin-top:10px;"></textarea>
         </div>
         """
+        
     content = f"""
     <h2>📝 {test.get('testName')}</h2>
     <p>⏱ Thời gian: {test.get('duration')} phút</p>
@@ -399,7 +561,7 @@ def student_do_test(test_id):
         <input type="hidden" name="csrf_token" value="{csrf_token}">
         <input type="hidden" name="jobId" value="{test.get('jobId')}">
         {questions_html}
-        <button type="submit" style="margin-top:20px;">📤 Nộp bài test</button>
+        <button type="submit" style="margin-top:20px; background:#2563eb; color:white; padding:10px 20px; border:none; border-radius:4px; cursor:pointer;">📤 Nộp bài test</button>
     </form>
     """
     
