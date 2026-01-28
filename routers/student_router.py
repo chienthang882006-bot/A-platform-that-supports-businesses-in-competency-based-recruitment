@@ -4,8 +4,8 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 
 from database import db_session
-from models.user_models import Student, StudentProfile, UserRole
-from models.app_models import Application, TestResult, ApplicationStatus
+from models.user_models import Company, Student, StudentProfile, UserRole
+from models.app_models import Application, Report, TestResult, ApplicationStatus
 from models.job_models import SkillTest, Job, Question, StudentSkill, Skill
 
 student_bp = Blueprint("student_router", __name__)
@@ -263,3 +263,39 @@ def get_student_applications(student_id):
         })
 
     return jsonify(result)
+
+
+@student_bp.route("/student/reports", methods=["POST"])
+@jwt_required()
+def student_report_company():
+    auth = require_student()
+    if auth:
+        return auth
+
+    data = request.json or {}
+    company_id = data.get("companyId")
+
+    student = get_current_student()
+
+    # ✅ KHÔNG CHO REPORT NHIỀU LẦN
+    existed = db_session.query(Report).filter(
+        Report.companyId == company_id,
+        Report.studentId == student.id   # 👈 quan trọng
+    ).first()
+
+    if existed:
+        # 👉 Đã report rồi thì coi như xong
+        return jsonify({"message": "Already reported"}), 200
+
+    report = Report(
+        companyId=company_id,
+        studentId=student.id,   # 👈 gắn student
+        reportType=data.get("reportType"),
+        content=data.get("content")
+    )
+
+    db_session.add(report)
+    db_session.commit()
+
+    return jsonify({"message": "Reported"}), 201
+

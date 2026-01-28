@@ -4,7 +4,7 @@ from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 from database import db_session
 from models.user_models import User, UserRole
 from models.job_models import Job
-from models.app_models import Application
+from models.app_models import Application, Report
 
 admin_bp = Blueprint("admin_router", __name__)
 
@@ -157,3 +157,48 @@ def admin_view_applications(job_id):
         "status": a.status.value if hasattr(a.status, "value") else a.status,
         "appliedAt": a.appliedAt.isoformat() if a.appliedAt else None
     } for a in apps])
+    
+# VIEW REPORTS
+@admin_bp.route("/admin/reports", methods=["GET"])
+@jwt_required()
+def admin_get_reports():
+    auth = require_admin()
+    if auth:
+        return auth
+
+    reports = db_session.query(Report) \
+        .order_by(Report.createdAt.desc()) \
+        .all()
+
+    return jsonify([
+        {
+            "id": r.id,
+            "companyId": r.companyId,
+            "companyName": r.company.companyName if r.company else None,
+            "reportType": r.reportType,
+            "content": r.content,
+            "createdAt": r.createdAt.isoformat() if r.createdAt else None
+        } for r in reports
+    ])
+    
+    
+@admin_bp.route("/admin/companies/<int:company_id>/reports", methods=["GET"])
+@jwt_required()
+def admin_get_reports_by_company(company_id):
+    auth = require_admin()
+    if auth:
+        return auth
+
+    reports = db_session.query(Report) \
+        .filter(Report.companyId == company_id) \
+        .order_by(Report.createdAt.desc()) \
+        .all()
+
+    return jsonify([
+        {
+            "id": r.id,
+            "reportType": r.reportType,
+            "content": r.content,
+            "createdAt": r.createdAt.isoformat()
+        } for r in reports
+    ])

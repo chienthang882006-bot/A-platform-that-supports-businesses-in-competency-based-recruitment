@@ -109,8 +109,10 @@ class Report(Base):
     __tablename__ = 'reports'
     id = Column(Integer, primary_key=True, index=True)
     companyId = Column(Integer, ForeignKey('companies.id'))
+    studentId = Column(Integer, ForeignKey('students.id'))
     reportType = Column(String)
     content = Column(Text)
     createdAt = Column(DateTime, default=datetime.utcnow)
 
     company = relationship("Company", back_populates="reports")
+    student = relationship("Student")

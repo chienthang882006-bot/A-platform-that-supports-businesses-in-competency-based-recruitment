@@ -415,13 +415,52 @@ def student_applications():
             <p style="font-size:12px; color:#999;">Ngày ứng tuyển: {a.get('appliedAt', '')}</p>
             {test_btn}
             {footer_msg}
+            <div style="margin-top:8px;">
+                <a href="/student/report?companyId={a.get('companyId')}">
+                    <button style="background:#ef4444; font-size:12px; padding:4px 10px;">
+                        🚨 Báo cáo công ty
+                    </button>
+                </a>
+            </div>
         </div>
         """
     
     if not html:
         html = "<p><i>Chưa ứng tuyển công việc nào</i></p>"
+    
+    msg = request.args.get("msg", "")
+    message_html = ""
 
-    return wrap_layout(f"<h2>📌 Việc làm đã ứng tuyển</h2>{html}")
+    if msg == "report_success":
+        message_html = """
+        <div style="
+            background:#ecfdf5;
+            border:1px solid #16a34a;
+            color:#166534;
+            padding:12px;
+            border-radius:6px;
+            margin-bottom:15px;
+            font-weight:600;
+        ">
+            ✅ Báo cáo công ty đã được ghi nhận.
+        </div>
+        """
+    elif msg == "report_fail":
+        message_html = """
+        <div style="
+            background:#fef2f2;
+            border:1px solid #ef4444;
+            color:#991b1b;
+            padding:12px;
+            border-radius:6px;
+            margin-bottom:15px;
+            font-weight:600;
+        ">
+            ❌ Báo cáo thất bại. Vui lòng thử lại sau.
+        </div>
+        """
+
+    return wrap_layout(f"<h2>📌 Việc làm đã ứng tuyển</h2>{message_html}{html}")
 
 @student_view_bp.route("/student/tests/<int:job_id>")
 def student_tests(job_id):
@@ -649,3 +688,72 @@ def student_test_submit(test_id):
 
     # 6. Không có jobId
     return redirect("/student/home?msg=✅+Hoàn+thành+bài+test")
+
+
+@student_view_bp.route("/student/report", methods=["GET", "POST"])
+def student_report_company():
+    csrf_token = generate_csrf_token()
+
+    user = require_student_view()
+    if not user:
+        return redirect("/login")
+
+    if request.method == "GET":
+        company_id = request.args.get("companyId")
+
+        content = f"""
+        <h2>🚨 Báo cáo công ty</h2>
+        <p style="color:#b91c1c;">
+            Chỉ báo cáo khi có dấu hiệu lừa đảo, thu phí hoặc thông tin sai sự thật.
+        </p>
+
+        <form method="post">
+            <input type="hidden" name="csrf_token" value="{csrf_token}">
+            <input type="hidden" name="companyId" value="{company_id}">
+
+            <label>Lý do báo cáo <span style="color:red">*</span></label>
+            <select name="reportType" required>
+                <option value="">-- Chọn lý do --</option>
+                <option value="Lừa đảo">Lừa đảo</option>
+                <option value="Thu phí trái phép">Thu phí trái phép</option>
+                <option value="Thông tin sai sự thật">Thông tin sai sự thật</option>
+                <option value="Hành vi không chuyên nghiệp">Hành vi không chuyên nghiệp</option>
+            </select>
+
+            <label>Mô tả chi tiết <span style="color:red">*</span></label>
+            <textarea name="content" rows="5" required
+                placeholder="Mô tả rõ sự việc, bằng chứng nếu có..."></textarea>
+
+            <button style="margin-top:15px; background:#ef4444;">
+                📤 Gửi báo cáo
+            </button>
+        </form>
+        """
+
+        resp = make_response(wrap_layout(content))
+        resp.set_cookie("csrf_token", csrf_token, httponly=True, samesite="Lax")
+        return resp
+
+    if not validate_csrf(request.form.get("csrf_token")):
+        return "CSRF token không hợp lệ", 400
+
+    company_id_raw = request.form.get("companyId")
+    company_id = int(company_id_raw) if company_id_raw and company_id_raw != "None" else None
+
+    res = requests.post(
+        f"{API_URL}/student/reports",
+        json={
+            "companyId": company_id,
+            "reportType": request.form.get("reportType"),
+            "content": request.form.get("content")
+        },
+        headers=auth_headers()
+    )
+
+    if res.status_code in (200, 201):
+        return redirect("/student/applications?msg=report_success")
+
+    return redirect("/student/applications?msg=report_fail")
+
+
+

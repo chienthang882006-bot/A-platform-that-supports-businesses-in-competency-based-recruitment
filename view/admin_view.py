@@ -1,79 +1,52 @@
-from flask import Blueprint, request, redirect
-from dotenv import load_dotenv
-import jwt
+from flask import Blueprint, request, redirect, make_response
 import requests
-import os
-from utils import wrap_layout, API_URL
+import secrets
+from utils import wrap_layout, API_URL, get_current_user_from_jwt, auth_headers
 from markupsafe import escape
 
-load_dotenv()
-
-admin_view_bp = Blueprint('admin_view', __name__)
-
-JWT_SECRET = os.getenv("JWT_SECRET_KEY")
-JWT_ALGO = "HS256"
+admin_view_bp = Blueprint("admin_view", __name__)
 
 def require_admin_view():
-    token = request.cookies.get("access_token")
-    if not token:
-        return redirect("/login")
-
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
-        if payload.get("role") != "admin":
-            return redirect("/login")
-    except jwt.ExpiredSignatureError:
-        return redirect("/login")
-    except jwt.InvalidTokenError:
-        return redirect("/login")
-
-    return None
-
-
-def safe_api_request(method, url):
-    token = request.cookies.get("access_token")
-    headers = {}
-
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    try:
-        res = requests.request(
-            method,
-            url,
-            headers=headers,
-            timeout=3
-        )
-        return res
-    except requests.RequestException:
+    user = get_current_user_from_jwt()
+    if not user:
         return None
+    if user.get("role") != "admin":
+        return None
+    return user
 
+def generate_csrf_token():
+    return secrets.token_hex(16)
+
+def validate_csrf(form_token):
+    cookie_token = request.cookies.get("csrf_token")
+    return cookie_token and form_token and cookie_token == form_token
 
 
 @admin_view_bp.route("/admin/home")
 def admin_home():
-    auth = require_admin_view()
-    if auth: return auth
+    user = require_admin_view()
+    if not user:
+        return redirect("/login")
 
     stats = {
         "users": 0, "students": 0, "companies": 0,
         "jobs": 0, "open_jobs": 0, "closed_jobs": 0, "applications": 0
     }
 
-    try:
-        res = safe_api_request("GET", f"{API_URL}/admin/home")
-        if res and res.status_code == 200:
-            data = res.json()
-
-            stats["users"] = data["users"]["total"]
-            stats["students"] = data["users"]["students"]
-            stats["companies"] = data["users"]["companies"]
-            stats["jobs"] = data["jobs"]["total"]
-            stats["open_jobs"] = data["jobs"]["open"]
-            stats["closed_jobs"] = data["jobs"]["closed"]
-            stats["applications"] = data["applications"]
-    except Exception as e:
-        print("Admin dashboard error:", e)
+    res = requests.get(
+        f"{API_URL}/admin/home",
+        headers=auth_headers(),
+        timeout=5
+    )
+    if res.status_code == 200:
+        data = res.json()
+        stats["users"] = data["users"]["total"]
+        stats["students"] = data["users"]["students"]
+        stats["companies"] = data["users"]["companies"]
+        stats["jobs"] = data["jobs"]["total"]
+        stats["open_jobs"] = data["jobs"]["open"]
+        stats["closed_jobs"] = data["jobs"]["closed"]
+        stats["applications"] = data["applications"]
 
     content = f"""
     <h2>📊 Admin Dashboard</h2>
@@ -96,32 +69,30 @@ def admin_home():
     """
     return wrap_layout(content)
 
+
 @admin_view_bp.route("/admin/users")
 def admin_users():
-    auth = require_admin_view()
-    if auth: return auth
+    user = require_admin_view()
+    if not user:
+        return redirect("/login")
 
-    users = []
-    try:
-        res = safe_api_request("GET", f"{API_URL}/admin/users")
-        users = res.json() if res and res.status_code == 200 else []
-    except:
-        pass
+    csrf_token = generate_csrf_token()
+
+    res = requests.get(
+        f"{API_URL}/admin/users",
+        headers=auth_headers(),
+        timeout=5
+    )
+    users = res.json() if res.status_code == 200 else []
 
     rows = ""
     for u in users:
-        if u["status"] == "active":
-            action = f"""
-            <form method="post" action="/admin/users/{u['id']}/lock" style="display:inline">
-                <button type="submit">🔒 Lock</button>
-            </form>
-            """
-        else:
-            action = f"""
-            <form method="post" action="/admin/users/{u['id']}/unlock" style="display:inline">
-                <button type="submit">🔓 Unlock</button>
-            </form>
-            """
+        action = f"""
+        <form method="post" action="/admin/users/{u['id']}/{'lock' if u['status']=='active' else 'unlock'}">
+            <input type="hidden" name="csrf_token" value="{csrf_token}">
+            <button>{'🔒 Lock' if u['status']=='active' else '🔓 Unlock'}</button>
+        </form>
+        """
 
         rows += f"""
         <tr>
@@ -133,7 +104,7 @@ def admin_users():
         </tr>
         """
 
-    content = f"""
+    resp = make_response(wrap_layout(f"""
     <h2>👥 User Management</h2>
     <table border="1" width="100%" cellpadding="10">
         <tr>
@@ -141,47 +112,67 @@ def admin_users():
         </tr>
         {rows}
     </table>
-    """
-    return wrap_layout(content)
+    """))
+
+    resp.set_cookie("csrf_token", csrf_token, httponly=True, samesite="Lax")
+    return resp
+
 
 @admin_view_bp.route("/admin/users/<int:user_id>/lock", methods=["POST"])
 def admin_lock_user(user_id):
-    auth = require_admin_view()
-    if auth: return auth
+    if not validate_csrf(request.form.get("csrf_token")):
+        return "CSRF invalid", 400
 
-    safe_api_request("PUT", f"{API_URL}/admin/users/{user_id}/lock")
+    if not require_admin_view():
+        return redirect("/login")
+
+    requests.put(
+        f"{API_URL}/admin/users/{user_id}/lock",
+        headers=auth_headers()
+    )
     return redirect("/admin/users")
+
 
 @admin_view_bp.route("/admin/users/<int:user_id>/unlock", methods=["POST"])
 def admin_unlock_user(user_id):
-    auth = require_admin_view()
-    if auth: return auth
+    if not validate_csrf(request.form.get("csrf_token")):
+        return "CSRF invalid", 400
 
-    safe_api_request("PUT", f"{API_URL}/admin/users/{user_id}/unlock")
+    if not require_admin_view():
+        return redirect("/login")
+
+    requests.put(
+        f"{API_URL}/admin/users/{user_id}/unlock",
+        headers=auth_headers()
+    )
     return redirect("/admin/users")
+
 
 @admin_view_bp.route("/admin/jobs")
 def admin_jobs():
-    auth = require_admin_view()
-    if auth: return auth
+    user = require_admin_view()
+    if not user:
+        return redirect("/login")
 
-    jobs = []
-    try:
-        res = safe_api_request("GET", f"{API_URL}/admin/jobs")
-        jobs = res.json() if res and res.status_code == 200 else []
-    except:
-        pass
+    csrf_token = generate_csrf_token()
+
+    res = requests.get(
+        f"{API_URL}/admin/jobs",
+        headers=auth_headers(),
+        timeout=5
+    )
+    jobs = res.json() if res.status_code == 200 else []
 
     rows = ""
     for j in jobs:
         action = ""
         if j["status"] != "CLOSED":
             action = f"""
-            <form method="post" action="/admin/jobs/{j['id']}/close" style="display:inline">
+            <form method="post" action="/admin/jobs/{j['id']}/close">
+                <input type="hidden" name="csrf_token" value="{csrf_token}">
                 <button type="submit">❌ Close</button>
             </form>
             """
-
 
         rows += f"""
         <tr>
@@ -193,7 +184,7 @@ def admin_jobs():
         </tr>
         """
 
-    content = f"""
+    resp = make_response(wrap_layout(f"""
     <h2>📄 Job Posting Management</h2>
     <table border="1" width="100%" cellpadding="10">
         <tr>
@@ -201,24 +192,41 @@ def admin_jobs():
         </tr>
         {rows}
     </table>
-    """
-    return wrap_layout(content)
+    """))
+
+    resp.set_cookie("csrf_token", csrf_token, httponly=True, samesite="Lax")
+    return resp
+
 
 @admin_view_bp.route("/admin/jobs/<int:job_id>/close", methods=["POST"])
 def admin_close_job(job_id):
-    auth = require_admin_view()
-    if auth: return auth
+    if not validate_csrf(request.form.get("csrf_token")):
+        return "CSRF token không hợp lệ", 400
 
-    safe_api_request("PUT", f"{API_URL}/admin/jobs/{job_id}/close")
+    if not require_admin_view():
+        return redirect("/login")
+
+    requests.put(
+        f"{API_URL}/admin/jobs/{job_id}/close",
+        headers=auth_headers()
+    )
     return redirect("/admin/jobs")
+
 
 @admin_view_bp.route("/admin/tests")
 def admin_tests():
-    auth = require_admin_view()
-    if auth: return auth
+    user = require_admin_view()
+    if not user:
+        return redirect("/login")
 
-    res = safe_api_request("GET", f"{API_URL}/admin/tests")
-    tests = res.json() if res and res.status_code == 200 else []
+    csrf_token = generate_csrf_token()
+
+    res = requests.get(
+        f"{API_URL}/admin/tests",
+        headers=auth_headers(),
+        timeout=5
+    )
+    tests = res.json() if res.status_code == 200 else []
 
     rows = ""
     for t in tests:
@@ -228,14 +236,15 @@ def admin_tests():
             <td>{escape(t['testName'])}</td>
             <td>{t['jobId']}</td>
             <td>
-                <form method="post" action="/admin/tests/{t['id']}/delete" style="display:inline">
+                <form method="post" action="/admin/tests/{t['id']}/delete">
+                    <input type="hidden" name="csrf_token" value="{csrf_token}">
                     <button type="submit">🗑 Delete</button>
                 </form>
             </td>
         </tr>
         """
 
-    return wrap_layout(f"""
+    resp = make_response(wrap_layout(f"""
     <h2>📝 Tests Management</h2>
     <table border="1" width="100%" cellpadding="10">
         <tr>
@@ -243,12 +252,22 @@ def admin_tests():
         </tr>
         {rows}
     </table>
-    """)
+    """))
+
+    resp.set_cookie("csrf_token", csrf_token, httponly=True, samesite="Lax")
+    return resp
+
     
 @admin_view_bp.route("/admin/tests/<int:test_id>/delete", methods=["POST"])
 def admin_delete_test(test_id):
-    auth = require_admin_view()
-    if auth: return auth
+    if not validate_csrf(request.form.get("csrf_token")):
+        return "CSRF token không hợp lệ", 400
 
-    safe_api_request("DELETE", f"{API_URL}/admin/tests/{test_id}")
+    if not require_admin_view():
+        return redirect("/login")
+
+    requests.delete(
+        f"{API_URL}/admin/tests/{test_id}",
+        headers=auth_headers()
+    )
     return redirect("/admin/tests")

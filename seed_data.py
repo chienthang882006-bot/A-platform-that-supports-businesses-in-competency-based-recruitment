@@ -1,111 +1,129 @@
 # FILE: seed_data.py
-from database import db_session, init_db
-from models import User, Student, StudentProfile, UserRole, Job, Company
 from datetime import datetime
+from flask_bcrypt import Bcrypt
 
-# 1. Khởi tạo session
-db = SessionLocal()
+from database import db_session
+from models import User, Student, StudentProfile, UserRole, Job, Company
+
+bcrypt = Bcrypt()
+db = db_session()
 
 try:
     print("--- 🛠 ĐANG KHÔI PHỤC DỮ LIỆU ---")
 
-    # ==========================================
-    # 1. TẠO TÀI KHOẢN CỦA BẠN (baotv0798)
-    # ==========================================
-    my_email = "baotv0798@ut.edu.vn"
-    
-    # Kiểm tra xem đã có chưa (để tránh lỗi chạy 2 lần)
-    if not db.query(User).filter(User.email == my_email).first():
-        # Tạo User
-        my_user = User(
-            email=my_email,
-            password="123",  # Mật khẩu tạm
+    PASSWORD = "Th@nG1"
+
+    # ======================================================
+    # 1. STUDENT USER
+    # ======================================================
+    student_email = "baotv0798@ut.edu.vn"
+
+    if not db.query(User).filter(User.email == student_email).first():
+        student_user = User(
+            email=student_email,
+            password=bcrypt.generate_password_hash(PASSWORD).decode("utf-8"),
             role=UserRole.STUDENT,
             status="active"
         )
-        db.add(my_user)
+        db.add(student_user)
         db.commit()
-        db.refresh(my_user)
-        
-        # Tạo Hồ sơ sinh viên (Bắt buộc phải có để không bị lỗi dashboard)
-        my_student = Student(
-            userId=my_user.id,
-            fullName="Bao Tran (Admin Student)", # Tên hiển thị
+        db.refresh(student_user)
+
+        student = Student(
+            userId=student_user.id,
+            fullName="Bao Tran",
             dob=datetime(1998, 7, 9),
             major="Information Technology"
         )
-        db.add(my_student)
+        db.add(student)
         db.commit()
-        db.refresh(my_student)
+        db.refresh(student)
 
-        # Tạo Profile chi tiết
-        my_profile = StudentProfile(
-            studentId=my_student.id,
+        profile = StudentProfile(
+            studentId=student.id,
             cvUrl="https://linkedin.com/in/baotv",
-            about="Xin chào, tôi là chủ sở hữu tài khoản này. Đang test hệ thống LabOdc."
+            about="Sinh viên test hệ thống LabOdc"
         )
-        db.add(my_profile)
+        db.add(profile)
         db.commit()
-        print(f"✅ Đã tạo tài khoản: {my_email} / Pass: 123")
-    # ==========================================
-    # 1.5. TẠO TÀI KHOẢN ADMIN (QUẢN TRỊ HỆ THỐNG)
-    # ==========================================
+
+        print("✅ STUDENT created:")
+        print("   Email:", student_email)
+        print("   Password:", PASSWORD)
+
+    # ======================================================
+    # 2. ADMIN USER
+    # ======================================================
     admin_email = "admin@labodc.com"
 
     if not db.query(User).filter(User.email == admin_email).first():
         admin_user = User(
             email=admin_email,
-            password="admin123",   # mật khẩu demo
-            role=UserRole.ADMIN,   # ⚠️ QUAN TRỌNG
+            password=bcrypt.generate_password_hash(PASSWORD).decode("utf-8"),
+            role=UserRole.ADMIN,
             status="active"
         )
         db.add(admin_user)
         db.commit()
         db.refresh(admin_user)
 
-        print("✅ Đã tạo tài khoản ADMIN:")
-        print("   Email: admin@labodc.com")
-        print("   Password: admin123")
-    # ==========================================
-    # 2. TẠO DỮ LIỆU MẪU (CÔNG TY & JOB)
-    # ==========================================
+        print("✅ ADMIN created:")
+        print("   Email:", admin_email)
+        print("   Password:", PASSWORD)
+
+    # ======================================================
+    # 3. COMPANY USER + COMPANY + JOBS
+    # ======================================================
     company_email = "hr@labodc.com"
+
     if not db.query(User).filter(User.email == company_email).first():
-        # Tạo User Công ty
-        comp_user = User(
+        company_user = User(
             email=company_email,
-            password="123",
+            password=bcrypt.generate_password_hash(PASSWORD).decode("utf-8"),
             role=UserRole.COMPANY,
             status="active"
         )
-        db.add(comp_user)
+        db.add(company_user)
         db.commit()
-        db.refresh(comp_user)
+        db.refresh(company_user)
 
-        # Tạo Profile Công ty
-        new_company = Company(
-            userId=comp_user.id,
-            companyName="LabOdc Tech",
-            description="Công ty công nghệ chuyên cung cấp giải pháp tuyển dụng thông minh.",
-            website="https://labodc.com"
+        company = Company(
+            userId=company_user.id,
+            companyName="LabOdc Tech"
         )
-        db.add(new_company)
+        db.add(company)
         db.commit()
-        db.refresh(new_company)
+        db.refresh(company)
 
-        # Tạo 2 Job mẫu
         jobs = [
-            Job(companyId=new_company.id, title="Backend Developer (Python)", description="Phát triển hệ thống API với FastAPI.", location="HCM", status="open"),
-            Job(companyId=new_company.id, title="Frontend Developer (Streamlit)", description="Xây dựng giao diện Dashboard.", location="Remote", status="open")
+            Job(
+                companyId=company.id,
+                title="Backend Developer (Python)",
+                description="Phát triển hệ thống API với FastAPI.",
+                location="HCM",
+                status="open"
+            ),
+            Job(
+                companyId=company.id,
+                title="Frontend Developer",
+                description="Xây dựng giao diện web.",
+                location="Remote",
+                status="open"
+            )
         ]
+
         db.add_all(jobs)
         db.commit()
-        print("✅ Đã tạo Công ty và Job mẫu.")
+
+        print("✅ COMPANY created:")
+        print("   Email:", company_email)
+        print("   Password:", PASSWORD)
+        print("   Jobs created")
 
 except Exception as e:
-    print(f"❌ Có lỗi xảy ra: {e}")
+    print("❌ ERROR:", e)
     db.rollback()
+
 finally:
     db.close()
-    print("--- HOÀN TẤT ---")
-    
+    print("--- ✅ HOÀN TẤT ---")
