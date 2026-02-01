@@ -26,6 +26,44 @@ def require_company_view():
 def validate_csrf(form_token):
     cookie_token = request.cookies.get("csrf_token")
     return cookie_token and form_token and cookie_token == form_token
+def get_company_profile_missing_fields_by_user(user_id: int):
+    company = db_session.query(Company).filter(Company.userId == user_id).first()
+    if not company:
+        return ["company"]
+
+    # Bạn có thể chỉnh danh sách bắt buộc ở đây
+    required_company = {"companyName": "Tên công ty"}
+
+    required_profile = {
+        "logoUrl": "Logo (URL)",
+        "website": "Website",
+        "industry": "Lĩnh vực",
+        "size": "Quy mô",
+        "address": "Địa chỉ",
+        "description": "Giới thiệu",
+    }
+
+    missing = []
+
+    # check Company
+    for attr, label in required_company.items():
+        val = getattr(company, attr, None)
+        if not val or str(val).strip() == "":
+            missing.append(label)
+
+    # check CompanyProfile
+    prof = db_session.query(CompanyProfile).filter(CompanyProfile.companyId == company.id).first()
+    if not prof:
+        missing.extend(list(required_profile.values()))
+        return missing
+
+    for attr, label in required_profile.items():
+        val = getattr(prof, attr, None)
+        if not val or str(val).strip() == "":
+            missing.append(label)
+
+    return missing
+
 
 def check_application_owner(app_id):
     user = require_company_view()
@@ -230,16 +268,16 @@ def company_jobs():
     user = require_company_view()
     if not user:
         return redirect('/login')
+
     db_session.remove()
     user_id = user["id"]
     content = "<h2>📄 Tin tuyển dụng của công ty</h2>"
 
     try:
-        # FIX: Truy vấn trực tiếp DB thay vì gọi API để tránh lỗi
-        # 1. Lấy thông tin công ty
-        db_session.expire_all()  # Đảm bảo lấy dữ liệu mới nhất
+        # 1) Lấy thông tin công ty
+        db_session.expire_all()
         company = db_session.query(Company).filter(Company.userId == user_id).first()
-        
+
         # Nếu chưa có công ty -> Hiển thị thông báo và nút tạo hồ sơ
         if not company:
             return wrap_layout("""
@@ -253,24 +291,40 @@ def company_jobs():
                 </div>
             """)
 
-        # 2. Render nút Tạo Job (Luôn hiện khi đã có company)
-        content += """
-        <a href="/company/jobs/create" style="display:inline-block; margin:10px 0; padding:10px 14px; background:#16a34a; color:white; border-radius:6px; text-decoration:none; font-weight:bold;">
-            ➕ Tạo Job mới
-        </a>
-        """
+        # 2) Check hồ sơ trước khi cho tạo job  ✅ (NẰM TRONG TRY)
+        missing_fields = get_company_profile_missing_fields_by_user(user_id)
 
-        # 3. Lấy danh sách Job
+        if missing_fields:
+            content += f"""
+            <div class="job-card" style="border-left:6px solid #ef4444; background:#fff5f5;">
+                <h3 style="margin:0; color:#b91c1c;">⚠️ Vui lòng nhập đầy đủ thông tin trước khi tạo job</h3>
+                <p style="margin:8px 0 0; color:#7f1d1d;">
+                    Thiếu: <b>{escape(", ".join(missing_fields))}</b>
+                </p>
+                <div style="margin-top:12px;">
+                    <a href="/company/profile"
+                       style="display:inline-block; background:#16a34a; color:white; padding:10px 16px; border-radius:6px; text-decoration:none; font-weight:bold;">
+                        👉 Cập nhật hồ sơ doanh nghiệp
+                    </a>
+                </div>
+            </div>
+            """
+        else:
+            content += """
+            <a href="/company/jobs/create" style="display:inline-block; margin:10px 0; padding:10px 14px; background:#16a34a; color:white; border-radius:6px; text-decoration:none; font-weight:bold;">
+                ➕ Tạo Job mới
+            </a>
+            """
+
+        # 3) Lấy danh sách Job (vẫn cho xem danh sách dù thiếu hồ sơ)
         my_jobs = db_session.query(Job).filter(Job.companyId == company.id).order_by(Job.createdAt.desc()).all()
 
         if not my_jobs:
             content += "<p>Chưa có tin tuyển dụng nào. Hãy tạo tin đầu tiên!</p>"
-        
-        # 4. Render danh sách Job ra HTML
+
+        # 4) Render danh sách job
         for j in my_jobs:
-            # Đếm số lượng hồ sơ ứng tuyển
             applied_count = db_session.query(func.count(Application.id)).filter(Application.jobId == j.id).scalar()
-            
             content += f"""
             <div class="job-card">
                 <div style="display:flex; justify-content:space-between;">
@@ -278,7 +332,7 @@ def company_jobs():
                     <span style="background:#e0f2fe; color:#0284c7; padding:4px 8px; border-radius:4px; font-size:12px; height:fit-content;">{j.status}</span>
                 </div>
                 <p style="white-space: pre-line; color:#555;">{escape(j.description[:150])}...</p>
-                <p><b>Ứng viên:</b> {applied_count} / {j.maxApplicants if j.maxApplicants > 0 else '∞'}</p>        
+                <p><b>Ứng viên:</b> {applied_count} / {j.maxApplicants if j.maxApplicants > 0 else '∞'}</p>
                 <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
                     <a href="/company/jobs/{j.id}/edit" style="margin-right:15px; color:#f59e0b; font-weight:bold; text-decoration:none;">
                         <i class="fa-solid fa-pen"></i> Chỉnh sửa
@@ -289,13 +343,14 @@ def company_jobs():
                 </div>
             </div>
             """
-            
+
     except Exception as e:
         print(f"Error loading jobs: {e}")
         return wrap_layout(f"<h3 style='color:red'>Lỗi tải dữ liệu: {str(e)}</h3>")
 
     resp = make_response(wrap_layout(content))
     return resp
+
 
 
 @company_view_bp.route('/company/jobs/create', methods=['GET', 'POST'])
@@ -313,8 +368,22 @@ def company_create_job():
     if not user:
         return redirect('/login')
 
-    user_id = user["id"]   
+    user_id = user["id"]
     message = ""
+
+    # ✅ GUARD (chặn luôn cả GET/POST nếu thiếu hồ sơ)
+    missing_fields = get_company_profile_missing_fields_by_user(user_id)
+    if missing_fields:
+        return wrap_layout(f"""
+            <div style="text-align:center; padding:50px;">
+                <h2 style="color:#ef4444;">⚠️ Vui lòng nhập đầy đủ thông tin trước khi tạo job</h2>
+                <p>Bạn đang thiếu: <b>{escape(", ".join(missing_fields))}</b></p>
+                <a href="/company/profile"
+                   style="background:#16a34a; color:white; padding:10px 20px; border-radius:6px; text-decoration:none; font-weight:bold;">
+                    👉 Cập nhật hồ sơ doanh nghiệp
+                </a>
+            </div>
+        """)
 
     # 2. XỬ LÝ LƯU JOB (TRỰC TIẾP DB)
     if request.method == 'POST':
@@ -329,16 +398,15 @@ def company_create_job():
                 companyId=company.id,
                 title=request.form['title'],
                 description=request.form['description'],
-                location=request.form['location'],
+                location=request.form.get('location', ''),
                 status="open",
                 maxApplicants=int(request.form.get("maxApplicants") or 0)
             )
             db_session.add(new_job)
-            db_session.flush()  # Quan trọng: Lấy ID của Job vừa tạo ngay lập tức
+            db_session.flush()  # Lấy ID của Job vừa tạo
 
             # Xử lý Bài Test (Nếu có tích chọn)
             if request.form.get('has_test') == 'on':
-                # Tạo bài test
                 new_test = SkillTest(
                     jobId=new_job.id,
                     testName=request.form.get('testName', f"Test for {new_job.title}"),
@@ -346,21 +414,21 @@ def company_create_job():
                     totalScore=int(request.form.get('totalScore') or 100)
                 )
                 db_session.add(new_test)
-                db_session.flush() # Lấy ID bài test
+                db_session.flush()
 
                 # Lưu danh sách câu hỏi
                 q_contents = request.form.getlist('q_content[]')
                 for c in q_contents:
-                    if c.strip():
+                    if c and c.strip():
                         db_session.add(Question(
                             testId=new_test.id,
                             content=c.strip(),
-                            options="", 
+                            options="",
                             correctAnswer=""
                         ))
 
             db_session.commit()
-            return redirect('/company/jobs') 
+            return redirect('/company/jobs')
 
         except Exception as e:
             db_session.rollback()
@@ -817,9 +885,27 @@ def company_evaluate_application(app_id):
                 )
                 db_session.add(interview)
                 
-                # Thông báo
-                display_time = time_str.replace("T", " ") if time_str else "Sẽ thông báo sau"
-                msg = f"🎉 Chúc mừng! Bạn được mời phỏng vấn vị trí '{app_item.job.title}'. ⏰ {display_time}."
+                # Thông báo (gửi đủ thời gian + địa điểm + ghi chú)
+                location = (request.form.get("interviewLocation") or "").strip()
+                note = (request.form.get("interviewNote") or "").strip()
+
+                # Ưu tiên format theo datetime đã parse (đẹp hơn), fallback theo time_str
+                if interview_time:
+                    display_time = interview_time.strftime("%d/%m/%Y %H:%M")
+                else:
+                    display_time = time_str.replace("T", " ") if time_str else "Sẽ thông báo sau"
+
+                loc_display = location if location else "Sẽ thông báo sau"
+
+                msg = (
+                    f"🎉 Chúc mừng! Bạn được mời phỏng vấn vị trí '{app_item.job.title}'. "
+                    f"⏰ {display_time}. 📍 {loc_display}"
+                )
+                if note:
+                    msg += f". 📝 {note}"
+
+                db_session.add(Notification(userId=app_item.student.userId, content=msg))
+
                 db_session.add(Notification(userId=app_item.student.userId, content=msg))
 
             elif action == 'rejected':

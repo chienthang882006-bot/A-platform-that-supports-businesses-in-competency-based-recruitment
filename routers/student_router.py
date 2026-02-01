@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from pprint import pp
+from flask import Blueprint, app, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity
 
 from database import db_session
@@ -194,6 +195,7 @@ def submit_test(test_id):
     if not test:
         return jsonify({"detail": "Test not found"}), 404
 
+    # 1) Lưu kết quả test
     tr = TestResult(
         testId=test_id,
         studentId=student.id,
@@ -202,16 +204,26 @@ def submit_test(test_id):
     )
     db_session.add(tr)
 
+    # 2) Tạo / cập nhật Application => PENDING
     app = db_session.query(Application).filter(
         Application.jobId == test.jobId,
         Application.studentId == student.id
     ).first()
 
-    if app:
+    if not app:
+        app = Application(
+            studentId=student.id,
+            jobId=test.jobId,
+            status=ApplicationStatus.PENDING
+        )
+        db_session.add(app)
+    else:
         app.status = ApplicationStatus.PENDING
 
     db_session.commit()
-    return jsonify({"message": "Nộp bài thành công", "testResultId": tr.id}), 200
+    return jsonify({"message": "Submitted", "applicationStatus": "PENDING"}), 200
+
+
 
 
 # 6. DANH SÁCH ỨNG TUYỂN

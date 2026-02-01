@@ -3,7 +3,7 @@ import requests
 import secrets
 from utils import wrap_layout, API_URL, get_current_user_from_jwt, auth_headers
 from markupsafe import escape
-
+from urllib.parse import quote_plus
 student_view_bp = Blueprint('student_view', __name__)
 
 def is_profile_complete(student_data):
@@ -30,7 +30,10 @@ def require_student_view():
 
 def generate_csrf_token():
     return secrets.token_hex(16)
-
+def safe_msg(s: str) -> str:
+    # bỏ xuống dòng để không chết Location header, rồi encode URL
+    s = str(s).replace("\r", " ").replace("\n", " ").strip()
+    return quote_plus(s)
 def validate_csrf(form_token):
     cookie_token = request.cookies.get("csrf_token")
     return cookie_token and form_token and cookie_token == form_token
@@ -96,7 +99,7 @@ def student_home():
             <div class="job-card">
                 <h3>{escape(j.get('title','(No title)'))}</h3>
                 <p>{escape(j.get('description',''))}</p>
-                <a href="/student/test/{test_id}">
+                <a href="/student/tests/{job_id}">
                     <button style="background:#f59e0b">
                         📝 Làm bài test
                     </button>
@@ -170,7 +173,8 @@ def apply(job_id):
     if missing:
         missing_str = ", ".join(missing)
         msg = f"⚠️ Bạn cần cập nhật: {missing_str} trước khi ứng tuyển!"
-        return redirect(f"/student/profile?msg={msg}")
+        return redirect(f"/student/profile?msg={safe_msg(msg)}")
+
     # ==================================================================
 
     # 3. Nếu hồ sơ OK -> Tiếp tục quy trình ứng tuyển cũ
@@ -656,7 +660,7 @@ def student_test_submit(test_id):
             msg = submit_res.json().get("detail") or submit_res.text
         except:
             msg = submit_res.text
-        return redirect(f"/student/home?msg=❌+Lỗi+nộp+bài:+{msg}")
+        return redirect(f"/student/home?msg={safe_msg('❌ Lỗi nộp bài: ' + str(msg))}")
 
     # 5. Apply job (jobId lấy từ form, KHÔNG session)
     job_id = request.form.get("jobId")
@@ -675,19 +679,19 @@ def student_test_submit(test_id):
                     data = {}
 
                 if data.get("status") in ("ALREADY_APPLIED", "APPLIED"):
-                    return redirect("/student/home?msg=✅+Hoàn+thành+bài+test+và+đã+ứng+tuyển")
+                    return redirect("/student/applications?msg=✅+Hoàn+thành+bài+test+và+đã+ứng+tuyển")
                 elif data.get("status") == "NEED_TEST":
-                    return redirect("/student/home?msg=✅+Hoàn+thành+bài+test,+đang+chờ+xét+duyệt")
+                    return redirect("/student/applications?msg=✅+Hoàn+thành+bài+test,+đang+chờ+xét+duyệt")
                 else:
-                    return redirect("/student/home?msg=✅+Hoàn+thành+bài+test")
+                    return redirect("/student/applications?msg=✅+Hoàn+thành+bài+test")
             else:
-                return redirect("/student/home?msg=⚠️+Hoàn+thành+bài+test+nhưng+apply+lỗi")
+                return redirect("/student/applications?msg=⚠️+Hoàn+thành+bài+test+nhưng+apply+lỗi")
 
         except Exception:
-            return redirect("/student/home?msg=⚠️+Hoàn+thành+bài+test+nhưng+apply+thất+bại")
+            return redirect("/student/applications?msg=⚠️+Hoàn+thành+bài+test+nhưng+apply+thất+bại")
 
     # 6. Không có jobId
-    return redirect("/student/home?msg=✅+Hoàn+thành+bài+test")
+    return redirect("/student/applications?msg=✅+Hoàn+thành+bài+test")
 
 
 @student_view_bp.route("/student/report", methods=["GET", "POST"])

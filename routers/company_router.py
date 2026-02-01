@@ -15,6 +15,7 @@ company_bp = Blueprint("company_router", __name__)
 
 
 # HELPER FUNCTIONS
+
 def safe_int(value, default=0):
     """Chuyển đổi an toàn sang int."""
     try:
@@ -45,6 +46,29 @@ def get_current_company():
     return db_session.query(Company).filter(
         Company.userId == user_id
     ).first()
+def get_company_profile_missing_fields(company: Company):
+    required_company = ["companyName"]
+    required_profile = ["logoUrl", "website", "industry", "size", "address", "description"]
+
+    missing = []
+
+    for f in required_company:
+        val = getattr(company, f, None)
+        if not val or str(val).strip() == "":
+            missing.append(f)
+
+    profile = db_session.query(CompanyProfile).filter(CompanyProfile.companyId == company.id).first()
+    if not profile:
+        missing.extend(required_profile)
+        return missing
+
+    for f in required_profile:
+        val = getattr(profile, f, None)
+        if not val or str(val).strip() == "":
+            missing.append(f)
+
+    return missing
+
 
 
 # COMPANY & PROFILE ROUTES
@@ -223,6 +247,13 @@ def create_job():
     company = get_current_company()
     if not company:
         return jsonify({"detail": "Company not found"}), 404
+        # ✅ GUARD: Chặn tạo job nếu chưa đủ hồ sơ
+    missing_fields = get_company_profile_missing_fields(company)
+    if missing_fields:
+        return jsonify({
+            "detail": "Vui lòng nhập đầy đủ thông tin trước khi tạo job",
+            "missingFields": missing_fields
+        }), 400
 
     data = request.json
     data["companyId"] = company.id  # 🔒 override
@@ -603,8 +634,20 @@ def evaluate_application(app_id):
                 status="Scheduled"
             ))
             
-            time_display = data.get("interviewTime", "").replace("T", " ")
-            msg = f"🎉 Hồ sơ '{app.job.title}' được DUYỆT phỏng vấn. ⏰ {time_display}."
+            time_raw = (data.get("interviewTime") or "").strip()
+            time_display = time_raw.replace("T", " ") if time_raw else "Sẽ thông báo sau"
+
+            loc = (data.get("interviewLocation") or "").strip()
+            note = (data.get("interviewNote") or "").strip()
+
+            loc_display = loc if loc else "Sẽ thông báo sau"
+            note_display = note if note else "Không có"
+
+            msg = (
+                f"🎉 Hồ sơ '{app.job.title}' được DUYỆT phỏng vấn. "
+                f"⏰ {time_display} | 📍 {loc_display} | 📝 {note_display}"
+            )
+
 
         # LOGIC 2: INTERVIEW -> OFFERED/REJECTED
         elif current_status == 'interview':
