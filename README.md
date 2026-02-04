@@ -6,36 +6,43 @@ Dự án quản lý tuyển dụng được xây dựng trên nền tảng Pytho
 
 Dưới đây là sơ đồ tổ chức mã nguồn theo đúng cấu trúc thư mục hiện tại của dự án:
 
-```text
-scr/                                # Thư mục gốc chứa mã nguồn của bạn                      
-│   ├── router/                     # Điều hướng Request
-│   │   ├── user_router.py         
-│   │   ├── recruitment_router.py  
-│   │   ├── student_router.py      
-│   │   └── company_router.py      
-│   ├── schemas/                    # Kiểm tra dữ liệu
-│   │   ├── user_schemas.py        
-│   │   ├── job_schemas.py         
-│   │   └── app_schemas.py         
-│   │         
-│   ├── models/                     # Định nghĩa bảng Database
-│   │   ├── base.py                 # Lớp cơ sở cho ORM
-│   │   ├── user_models.py      
-│   │   ├── job_models.py       
-│   │   └── app_models.py       
-│   ├── main.py
-│   ├── views/                  # [MỚI] Chứa code trả về HTML (Giao diện)
-│   │    ├── auth_view.py        # Login, Register
-│   │    ├── student_view.py     # Màn hình sinh viên
-│   │    ├── company_view.py     # Màn hình công ty
-│   │    └── admin_view.py       # Màn hình admin
-│   ├── utils.py                    # Chứa hàm dùng chung (Layout, Notif, Config)
-│   ├── seed_data.py                # Tệp khởi tạo dữ liệu mẫu
-│   ├── app.py                      # Cấu hình ứng dụng
-│   ├── database.py                 # Quản lý Session và Engine
-│   └── RecruitmentApp.db           # Cơ sở dữ liệu SQLite hiện tại
-├── .gitignore                      # Quản lý Git
-└── requirements.txt                # Danh sách thư viện cài đặt
+```
+├── models                                # Định nghĩa bảng Database
+│   ├── __init__.py
+│   ├── app_models.py
+│   ├── base.py                           # Lớp cơ sở cho ORM
+│   ├── job_models.py
+│   └── user_models.py
+├── routers                               # Điều hướng Request
+│   ├── __init__.py
+│   ├── admin_router.py
+│   ├── company_router.py
+│   ├── recruitment_router.py
+│   ├── student_router.py
+│   └── user_router.py
+├── schemas                               # Kiểm tra dữ liệu
+│   ├── __init__.py
+│   ├── app_schemas.py
+│   ├── job_schemas.py
+│   └── user_schemas.py
+├── tests_e2e
+│   ├── conftest.py
+│   └── test_dual_role_company_student.py
+├── view                                  # Chứa code trả về HTML (Giao diện)
+│   ├── admin_view.py                     # Màn hình admin
+│   ├── auth_view.py                      # Login, Register
+│   ├── company_view.py                   # Màn hình công ty
+│   └── student_view.py                   # Màn hình sinh viên
+├── .gitignore                            # Quản lý Git
+├── README.md
+├── app.py                                # Cấu hình ứng dụng     
+├── database.py                           # Quản lý Session và Engine
+├── extensions.py
+├── main.py
+├── requirements.txt                      # Danh sách thư viện cài đặt
+├── requirements-dev.txt                  # Thư viện chỉ phục vụ test / e2e (không cần nếu chỉ chạy app)
+├── seed_data.py                          # Tệp khởi tạo dữ liệu mẫu
+└── utils.py                              # Chứa hàm dùng chung (Layout, Notif, Config)
 ```
 ## ✨ Key Features (Tính năng chính)
 
