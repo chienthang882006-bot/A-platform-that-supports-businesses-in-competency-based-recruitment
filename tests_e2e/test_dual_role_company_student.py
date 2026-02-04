@@ -311,3 +311,250 @@ def test_company_student_flow():
         context_student.close()
         context_company.close()
         browser.close()
+
+from datetime import datetime, timedelta
+
+def student_click_apply_or_test(page: Page, job_title: str) -> None:
+    _goto(page, "/student/home")
+    pause_step(page, 1200)
+
+    # chờ job hiện lên
+    for _ in range(8):
+        if page.locator(f"text={job_title}").count() > 0:
+            break
+        page.reload(wait_until="domcontentloaded")
+        pause_step(page, 800)
+
+    assert page.locator(f"text={job_title}").count() > 0, f"Student không thấy job '{job_title}' ở /student/home"
+
+    card = page.locator(".job-card", has=page.locator(f"text={job_title}")).first
+    expect(card).to_be_visible(timeout=20_000)
+
+    # job có test sẽ có "📝 Làm bài test" (button nằm trong <a>)
+    btn_test = card.locator("button", has_text="Làm bài test")
+    btn_apply = card.locator("button", has_text="Ứng tuyển")
+
+    if btn_test.count() > 0:
+        btn_test.first.click()
+    elif btn_apply.count() > 0:
+        btn_apply.first.click()
+    else:
+        raise AssertionError("Không tìm thấy nút 'Làm bài test' hoặc 'Ứng tuyển' trong job-card")
+
+    pause_step(page, 1500)
+
+
+def student_do_test_and_submit(page: Page) -> None:
+    # đang ở /student/test/<id>
+    expect(page.locator("button", has_text="Nộp bài test")).to_be_visible(timeout=20_000)
+
+    answers = page.locator("textarea[name^='answer_']")
+    expect(answers.first).to_be_visible(timeout=20_000)
+
+    for i in range(answers.count()):
+        answers.nth(i).fill(f"Đây là câu trả lời E2E cho câu {i+1}.")
+        pause_step(page, 250)
+
+    page.locator("button", has_text="Nộp bài test").click()
+    pause_step(page, 1500)
+
+    # về trang applications
+    page.wait_for_url("**/student/applications**", timeout=60_000)
+    pause_step(page, 1200)
+
+    # ✅ assert theo UI thật của bạn
+    # 1) Có badge pending
+    expect(page.locator("text=pending")).to_be_visible(timeout=20_000)
+
+    # 2) Có dòng "✅ Đã làm bài test"
+    expect(page.locator("text=Đã làm bài test")).to_be_visible(timeout=20_000)
+
+
+def student_assert_job_not_on_home(page: Page, job_title: str) -> None:
+    _goto(page, "/student/home")
+    pause_step(page, 1200)
+    # job phải biến mất vì:
+    # - đã apply => job_id in applied_job_ids => continue
+    # - hoặc đã làm test => done_test_ids => điều kiện đổi nút
+    assert page.locator(f"text={job_title}").count() == 0, "Job vẫn còn hiện ở /student/home (đáng lẽ phải bị ẩn)"
+
+
+def company_open_evaluate_for_student(page: Page, job_title: str, student_name: str = "E2E Student") -> None:
+    _goto(page, "/company/applications")
+    pause_step(page, 1200)
+
+    row = page.locator("tr", has=page.locator(f"text={student_name}")).filter(has_text=job_title).first
+    expect(row).to_be_visible(timeout=20_000)
+
+    # link "Đánh giá"
+    row.locator("a", has_text="Đánh giá").click()
+    pause_step(page, 1200)
+
+    expect(page.locator("text=Quy trình tuyển dụng")).to_be_visible(timeout=20_000)
+
+
+def company_set_interview(page: Page) -> None:
+    # form pending/testing
+    expect(page.locator("text=Thông tin phỏng vấn")).to_be_visible(timeout=20_000)
+
+    # chọn sao (nếu có)
+    if page.locator("select[name='starRating']").count() > 0:
+        page.select_option("select[name='starRating']", "4")
+        pause_step(page, 300)
+
+    page.fill("textarea[name='peerReview']", "Ứng viên làm bài ổn, logic tốt.")
+    pause_step(page, 300)
+
+    # datetime-local required: YYYY-MM-DDTHH:MM
+    dt = datetime.now() + timedelta(days=1)
+    time_str = dt.strftime("%Y-%m-%dT%H:%M")
+
+    page.fill("input[name='interviewTime']", time_str)
+    pause_step(page, 300)
+    page.fill("input[name='interviewLocation']", "Google Meet")
+    pause_step(page, 300)
+    page.fill("input[name='interviewNote']", "Chuẩn bị laptop và internet ổn định.")
+    pause_step(page, 500)
+
+    # click mời phỏng vấn
+    page.locator("button[name='action'][value='interview']").click()
+    pause_step(page, 1200)
+
+    page.wait_for_url("**/company/applications", timeout=60_000)
+    pause_step(page, 900)
+
+
+def company_send_offer(page: Page, job_title: str, student_name: str = "E2E Student") -> None:
+    # mở evaluate lại (lúc này status = interview)
+    company_open_evaluate_for_student(page, job_title, student_name)
+
+    expect(page.locator("text=Kết quả phỏng vấn")).to_be_visible(timeout=20_000)
+    page.fill("textarea[name='interviewFeedback']", "Phỏng vấn tốt, phù hợp văn hoá. Đề xuất offer.")
+    pause_step(page, 300)
+    page.select_option("select[name='interviewRating']", "5")
+    pause_step(page, 300)
+
+    page.locator("button[name='action'][value='offered']").click()
+    pause_step(page, 1200)
+
+    page.wait_for_url("**/company/applications", timeout=60_000)
+    pause_step(page, 900)
+
+
+def student_assert_interview_then_offered(page: Page) -> None:
+    _goto(page, "/student/applications")
+    pause_step(page, 1200)
+
+    # INTERVIEW
+    expect(page.locator("text=INTERVIEW")).to_be_visible(timeout=20_000)
+    # có footer msg
+    expect(page.locator("text=Bạn có lịch phỏng vấn")).to_be_visible(timeout=20_000)
+
+
+def student_report_company(page: Page) -> None:
+    _goto(page, "/student/applications")
+    pause_step(page, 1200)
+
+    # bấm nút báo cáo đầu tiên
+    report_btn = page.locator("button", has_text="Báo cáo công ty").first
+    expect(report_btn).to_be_visible(timeout=20_000)
+    report_btn.click()
+    pause_step(page, 1200)
+
+    # form report
+    expect(page.locator("text=Báo cáo công ty")).to_be_visible(timeout=20_000)
+    page.select_option("select[name='reportType']", "Thông tin sai sự thật")
+    pause_step(page, 300)
+    page.fill("textarea[name='content']", "E2E report: Nội dung tin tuyển dụng chưa rõ ràng / thiếu minh bạch.")
+    pause_step(page, 300)
+
+    page.locator("button", has_text="Gửi báo cáo").click()
+    pause_step(page, 1500)
+
+    # quay về applications và thấy banner success
+    page.wait_for_url("**/student/applications**", timeout=60_000)
+    expect(page.locator("text=Báo cáo công ty đã được ghi nhận")).to_be_visible(timeout=20_000)
+@pytest.mark.e2e
+def test_full_pipeline_test_interview_offer_and_report():
+    ts = int(time.time())
+    company_email = f"company_e2e_{ts}@test.com"
+    student_email = f"student_e2e_{ts}@test.com"
+    password = "Aa1!aa"
+    job_title = f"Backend Intern {ts}"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=SLOW_MO_MS)
+
+        # ===== COMPANY =====
+        context_company = browser.new_context()
+        page_company = context_company.new_page()
+        page_company.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+        page_company.set_default_timeout(ACTION_TIMEOUT_MS)
+        _block_external_and_heavy_resources(page_company)
+
+        # ===== STUDENT =====
+        context_student = browser.new_context()
+        page_student = context_student.new_page()
+        page_student.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+        page_student.set_default_timeout(ACTION_TIMEOUT_MS)
+        _block_external_and_heavy_resources(page_student)
+
+        # 1) Company tạo job có test
+        register(page_company, company_email, password, role="company")
+        login(page_company, company_email, password)
+        page_company.wait_for_url("**/company/home", timeout=60_000)
+        company_update_profile(page_company)
+        company_create_job_with_test(page_company, job_title)
+
+        # 2) Student hoàn thiện profile + làm test
+        register(page_student, student_email, password, role="student")
+        login(page_student, student_email, password)
+        page_student.wait_for_url("**/student/home", timeout=60_000)
+
+        student_update_profile_full(page_student)
+
+        # click "Làm bài test" rồi submit
+        student_click_apply_or_test(page_student, job_title)
+        if "/student/tests/" in page_student.url:
+            # trang trung gian: /student/tests/<job_id> sẽ redirect sang /student/test/<test_id>
+            page_student.wait_for_url("**/student/test/**", timeout=60_000)
+        # Sau click có thể đang ở /student/tests/<job_id> (trung gian),
+        # hoặc /student/test/<test_id>, hoặc thậm chí đã redirect về /student/applications.
+        if "/student/tests/" in page_student.url:
+            page_student.wait_for_url("**/student/test/**", timeout=60_000)
+
+        # Nếu đang ở trang test thì submit, nếu đã về applications thì chỉ verify UI
+        if "/student/test/" in page_student.url:
+            student_do_test_and_submit(page_student)
+        else:
+            # đã về applications rồi -> verify trực tiếp
+            _goto(page_student, "/student/applications")
+            pause_step(page_student, 1200)
+            expect(page_student.locator("text=Đã làm bài test")).to_be_visible(timeout=20_000)
+
+
+        # job phải biến mất ở /student/home
+        student_assert_job_not_on_home(page_student, job_title)
+
+        # 3) Company mời phỏng vấn
+        company_open_evaluate_for_student(page_company, job_title, "E2E Student")
+        company_set_interview(page_company)
+
+        # 4) Student thấy INTERVIEW
+        student_assert_interview_then_offered(page_student)
+
+        # 5) Company gửi offer
+        company_send_offer(page_company, job_title, "E2E Student")
+
+        # 6) Student thấy OFFERED
+        _goto(page_student, "/student/applications")
+        pause_step(page_student, 1200)
+        expect(page_student.locator("text=OFFERED")).to_be_visible(timeout=20_000)
+
+        # 7) Student report company
+        student_report_company(page_student)
+
+        context_student.close()
+        context_company.close()
+        browser.close()
+
